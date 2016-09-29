@@ -1,0 +1,159 @@
+#!/bin/bash
+#
+# This file is part of the nvrrp project (https://launchpad.net/nvrrp/)
+#
+# Copyright (C) 2016   Pluribus Networks
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+VRRP_CONF=/etc/nvrrp
+VRRP_BIN=/usr/bin/nvrrp
+VRRP_LOG=/var/log/nvrrp.log
+NETWORK_IFS=/etc/network/interfaces
+
+log()
+{
+	ts=$(date +"%x %X")
+	echo "[${ts}] $1" >> ${VRRP_LOG}
+}
+
+log_echo()
+{
+	log $1
+	echo $1
+}
+
+#
+# Returns true (1) if all the primary interfaces are up and false (0) if not.
+#
+primary_intfs_up()
+{
+	ifs=($(grep primary_intf ${VRRP_CONF}/* | cut -d' ' -f2))
+	cnt=${#ifs[@]}
+	max_iter=90
+	iter=0
+	up=0
+
+	#
+	# Remove any disabled interfaces.
+	#
+	for i in ${!ifs[@]}; do
+		grep -w "up /sbin/ifconfig ${ifs[i]} down" ${NETWORK_IFS} > /dev/null
+		if [ $? -eq 0 ]; then
+			unset ifs[i]
+			(( cnt-- ))
+		fi
+	done
+
+	if [ ${#ifs[@]} -eq 0 ]; then
+		return 1
+	fi
+
+	#
+	# Wait until the interfaces are up, one second per down interface, up
+	# to ${max_iter} total wait cycles.
+	#
+	while [ "$up" -lt "$cnt" -a "$iter" -lt "$max_iter" ]; do
+		for i in ${!ifs[@]}; do
+			state=$(cat /sys/class/net/"${ifs[i]}"/operstate)
+			log "primary ${ifs[i]} is ${state}"
+
+			if [ "${state}" = "up" ]; then
+				(( up++ ))
+				unset ifs[i]
+			fi
+		done
+
+		(( iter++ ))
+		log "${#ifs[@]} interface(s) are down"
+		sleep 1
+	done
+
+	if [ "$up" -eq "$cnt" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+case "$1" in
+  start)
+	log "starting service"
+
+	pid=$(pgrep -x nvrrp)
+	if [ $? -eq 0 ]; then
+		log_echo "daemon is already running"
+		exit 0
+	fi
+
+	primary_intfs_up
+        if [ $? -eq 0 ]; then
+		log_echo "failed to start nvrrp (not all primary interfaces up)"
+	fi
+
+	$VRRP_BIN
+	if [ $? -ne 0 ]; then
+		log_echo "failed to start nvrrp daemon"
+		exit 1
+	fi
+	;;
+
+  stop)
+	log "stopping service"
+
+	pid=$(pgrep -x nvrrp)
+	if [ $? -ne 0 ]; then
+		log_echo "nvrrp daemon isn't running"
+		exit 0
+	fi
+
+	$VRRP_BIN -q
+	if [ $? -ne 0 ]; then
+		log_echo "failed to quit nvrrp"
+		exit 1
+	fi
+	;;
+
+  reload|force-reload|restart)
+	pid=$(pgrep -x nvrrp)
+	if [ $? -ne 0 ]; then
+		log_echo "unable to reload configuration (daemon isn't running)"
+		exit 1
+	fi
+
+	log_echo "reloading nvrrp configuration files"
+
+	$VRRP_BIN -r
+	if [ $? -ne 0 ]; then
+		log_echo "failed to reload nvrrp configuration"
+		exit 1
+	fi
+	;;
+
+  status)
+	pid=$(pgrep -x nvrrp)
+	if [ $? -eq 0 ]; then
+		echo "nvrrp service is running"
+	else
+		echo "nvrrp service it not running"
+	fi
+	;;
+  *)
+	echo "invalid option"
+	exit 1
+	;;
+esac
+
+exit 0
