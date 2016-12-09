@@ -51,6 +51,8 @@
 #define	VRRP_LOG_FILE		"/var/log/nvrrp.log"
 #define	VRRP_LOG_FILE_PREV	"/var/log/nvrrp.log.prev"
 #define	VRRP_UNIX_SOCKET	"/tmp/nvrrp.unix.socket"
+#define	VERSION_MAJOR		(0)
+#define	VERSION_MINOR		(1)
 
 #define	IFNAME_LEN		(16)
 #define	IP_STRING_LEN		(16)
@@ -280,7 +282,8 @@ typedef enum {
 	CTRL_SUMMARY		= 3,
 	CTRL_VIP_STATE		= 4,
 	CTRL_QUIT		= 5,
-	CTRL_CLEAR_COUNTERS	= 6
+	CTRL_CLEAR_COUNTERS	= 6,
+	CTRL_VERSION		= 7
 } ctrl_msg_t;
 
 /*
