@@ -28,6 +28,7 @@ static char *vrrp_usage_str =
 	"    -v [vip]   show the state of a given vip interface\n"
 	"    -q	 quit the nvrrp daemon\n"
 	"    -c	 clear state counters\n"
+	"    -V  show the current version\n"
 	"    -h	 show this help message";
 
 static pthread_rwlock_t		vrrp_list_rwlock;
@@ -184,7 +185,7 @@ void
 vrrp_quit(const char *fmt, ...)
 {
 	va_list		args;
-	char		buf[300];
+	char		buf[512];
 	vrrp_impl_t	*impl;
 	struct timespec	ts = { 0 };
 	int64_t		start = NANOSEC/2, inc = NANOSEC/10, max = NANOSEC;
@@ -2414,6 +2415,9 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 		}
 		break;
 
+	case CTRL_VERSION:
+		break;
+
 	default:
 		(void) strlcpy(ctrl_msg->vcm_buf, "invalid command",
 		    sizeof (ctrl_msg->vcm_buf));
@@ -2602,8 +2606,10 @@ vrrp_ctrl_handler(void *arg)
 			vrrp_quit("quitting");
 			break;
 
+		case CTRL_VERSION:
+			break;
+
 		default:
-			assert(0);
 			break;
 		}
 
@@ -2807,7 +2813,7 @@ main(int argc, char **argv)
 	running = vrrp_is_running();
 
 	if (argc > 1) {
-		while ((ch = getopt(argc, argv, "rsSv:qch")) != -1) {
+		while ((ch = getopt(argc, argv, "rsSv:qchV")) != -1) {
 			switch (ch) {
 			case 'r':
 				ctrl_msg.vcm_msg = CTRL_RELOAD;
@@ -2837,6 +2843,13 @@ main(int argc, char **argv)
 			case 'c':
 				ctrl_msg.vcm_msg = CTRL_CLEAR_COUNTERS;
 				break;
+
+			case 'V':
+				vrrp_log(LOG_INFO, "nvrrp version %d.%d :: "
+				    "http://launchpad.net/nvrrp", VERSION_MAJOR,
+				    VERSION_MINOR);
+				return (EXIT_SUCCESS);
+
 			case '?':
 			case 'h':
 			default:
