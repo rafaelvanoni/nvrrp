@@ -20,16 +20,17 @@
 
 #include "nvrrp.h"
 
-static char *vrrp_usage_str =
-	"usage: nvrrp [ -r | -s | -S | -v [vip] | -q | -h ]\n"
-	"    -r	 reload configuration\n"
-	"    -s	 show complete state\n"
-	"    -S	 show summary of current sessions\n"
-	"    -v [vip]   show the state of a given vip interface\n"
-	"    -q	 quit the nvrrp daemon\n"
-	"    -c	 clear state counters\n"
-	"    -V  show the current version\n"
-	"    -h	 show this help message";
+static char *vrrp_usage_str = "usage: nvrrp "
+	"[ -r | -s | -S | -v [vip] | -q | -c | -V | -l [level] | -h ]\n"
+	"   -r          reload configuration\n"
+	"   -s          show complete state\n"
+	"   -S          show summary of current sessions\n"
+	"   -v [vip]    show the state of a given vip interface\n"
+	"   -q          quit the nvrrp daemon\n"
+	"   -c          clear state counters\n"
+	"   -V          show the current version\n"
+	"   -l [level]  change the log level (1 or 2)\n"
+	"   -h          show this help message";
 
 static pthread_rwlock_t		vrrp_list_rwlock;
 static vrrp_impl_t		vrrp_impl_array[MAX_NUM_VRRP_INTF];
@@ -77,8 +78,8 @@ vrrp_rwlock_unlock(pthread_rwlock_t *lock)
 }
 
 /*
- * Log to stdout if in 'client' mode or if the log file hasn't been opened yet,
- * or to the log file itself when in daemon mode.
+ * Log to stdout if in 'client' mode or if the log file hasn't been opened yet.
+ * When in daemon mode, log to the log file itself.
  */
 void
 vrrp_log(log_level_t level, const char *arg_fmt, ...)
@@ -89,13 +90,16 @@ vrrp_log(log_level_t level, const char *arg_fmt, ...)
 	struct tm	tm;
 	char		time_buf[32];
 
+	pthread_mutex_lock(&vrrp_log_mutex);
+
 	if (!(vrrp_log_level & level)) {
+		pthread_mutex_unlock(&vrrp_log_mutex);
 		return;
 	}
 
-	pthread_mutex_lock(&vrrp_log_mutex);
-
-	if (vrrp_log_level & LOG_DAEMON) {
+	if (!vrrp_daemon) {
+		stream = stdout;
+	} else {
 		if (vrrp_log_fp == NULL &&
 		    (vrrp_log_fp = fopen(VRRP_LOG_FILE, "a+")) == NULL) {
 			perror("failed to open log");
@@ -133,8 +137,15 @@ vrrp_log(log_level_t level, const char *arg_fmt, ...)
 		} else {
 			(void) fprintf(stream, "[%d] ", (int)getpid());
 		}
-	} else {
-		stream = stdout;
+
+		switch (level) {
+		case LOG_ERR:
+			(void) fprintf(stream, "ERROR : ");
+			break;
+		case LOG_INFO:
+			(void) fprintf(stream, "INFO : ");
+			break;
+		}
 	}
 
 	va_start(args, arg_fmt);
@@ -2343,6 +2354,9 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 	ctrl_msg_t		msg_type;
 	vrrp_impl_t		impl;
 
+	/*
+	 * First we send the command to the daemon..
+	 */
 	if ((send_socket = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
 		vrrp_log(LOG_ERR, "failed to open UNIX socket (%s)",
 		    strerror(errno));
@@ -2370,11 +2384,15 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 		return (EIO);
 	}
 
+	/*
+	 * ..then wait for a reply according to the type of command.
+	 */
 	switch (msg_type) {
 	case CTRL_RELOAD:
 	case CTRL_SUMMARY:
 	case CTRL_VIP_STATE:
 	case CTRL_CLEAR_COUNTERS:
+	case CTRL_LOG_LEVEL:
 		if (read(send_socket, ctrl_msg, sizeof (*ctrl_msg)) !=
 		    sizeof (*ctrl_msg)) {
 			vrrp_log(LOG_ERR, "failed to get reply");
@@ -2391,7 +2409,7 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 				break;
 			}
 
-			memcpy((void *)&impl, (void *)ctrl_msg->vcm_buf,
+			(void) memcpy((void *)&impl, (void *)ctrl_msg->vcm_buf,
 			    sizeof (impl));
 
 			if (impl.vi_file[0] == '\0') {
@@ -2529,6 +2547,7 @@ vrrp_ctrl_handler(void *arg)
 {
 	int			n, conn_socket = (intptr_t)arg;
 	int			alloced, deleted;
+	uint64_t		val;
 	vrrp_ctrl_msg_t		ctrl_msg;
 
 	for (;;) {
@@ -2591,6 +2610,31 @@ vrrp_ctrl_handler(void *arg)
 		case CTRL_CLEAR_COUNTERS:
 			vrrp_clear_counters();
 			(void) strlcpy(ctrl_msg.vcm_buf, "counters cleared",
+			    sizeof (ctrl_msg.vcm_buf));
+			break;
+
+		case CTRL_LOG_LEVEL:
+			if (vrrp_strtoul(ctrl_msg.vcm_buf, &val) != 0) {
+				(void) strlcpy(ctrl_msg.vcm_buf,
+				    "failed to convert new log level",
+				    sizeof (ctrl_msg.vcm_buf));
+				break;
+			}
+
+			if (val != LOG_INFO && val != LOG_ERR) {
+				(void) strlcpy(ctrl_msg.vcm_buf,
+				    "invalid log level specified",
+				    sizeof (ctrl_msg.vcm_buf));
+				break;
+			}
+
+			pthread_mutex_lock(&vrrp_log_mutex);
+			vrrp_log_level = (log_level_t)val;
+			pthread_mutex_unlock(&vrrp_log_mutex);
+
+			vrrp_log(LOG_INFO, "log level set to %d",
+			    vrrp_log_level);
+			(void) strlcpy(ctrl_msg.vcm_buf, "log level modified",
 			    sizeof (ctrl_msg.vcm_buf));
 			break;
 
@@ -2765,7 +2809,7 @@ vrrp_init(void)
 	if (vrrp_config_load(&alloced, &deleted) != 0) {
 		vrrp_log(LOG_INFO, "failed to load config file(s)");
 	} else {
-		vrrp_log(LOG_INFO, "%d session(s) loaded\n"
+		vrrp_log(LOG_INFO, "%d session(s) loaded, "
 		    "%d session(s) deleted", alloced, deleted);
 	}
 
@@ -2807,13 +2851,14 @@ main(int argc, char **argv)
 	boolean_t	running;
 
 	/*
-	 * Running without any options will start the daemon load all the
-	 * configuration. But first we need to check if its already running.
+	 * Invoking nvrrp(1) without any options will start the daemon load
+	 * any existing configuration. But first we need to check if its
+	 * already running.
 	 */
 	running = vrrp_is_running();
 
 	if (argc > 1) {
-		while ((ch = getopt(argc, argv, "rsSv:qchV")) != -1) {
+		while ((ch = getopt(argc, argv, "rsSv:l:qchV")) != -1) {
 			switch (ch) {
 			case 'r':
 				ctrl_msg.vcm_msg = CTRL_RELOAD;
@@ -2830,6 +2875,15 @@ main(int argc, char **argv)
 			case 'v':
 				if (optarg != NULL && optarg[0] != '\0') {
 					ctrl_msg.vcm_msg = CTRL_VIP_STATE;
+					(void) snprintf(ctrl_msg.vcm_buf,
+					    sizeof (ctrl_msg.vcm_buf), "%s",
+					    optarg);
+				}
+				break;
+
+			case 'l':
+				if (optarg != NULL && optarg[0] != '\0') {
+					ctrl_msg.vcm_msg = CTRL_LOG_LEVEL;
 					(void) snprintf(ctrl_msg.vcm_buf,
 					    sizeof (ctrl_msg.vcm_buf), "%s",
 					    optarg);
@@ -2908,7 +2962,7 @@ main(int argc, char **argv)
 	}
 
 	vrrp_daemon = B_TRUE;
-	vrrp_log_level = (LOG_ERR | LOG_INFO | LOG_DAEMON);
+	vrrp_log_level = (LOG_ERR | LOG_INFO);
 
 	return (vrrp_init());
 }
