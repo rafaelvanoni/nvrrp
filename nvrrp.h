@@ -99,7 +99,7 @@ typedef int			socket_t;
 #define	VRRP_PROTOCOL		(112)
 
 /*
- * VRRPv2 and v3 only defines one packet type, '1' for 'advertisement'.
+ * VRRPv2 and v3 only define one packet type, '1' for 'advertisement'.
  */
 typedef enum {
 	VRRP_PKT_ADVERT		= 1
@@ -177,7 +177,7 @@ typedef enum {
 	VRRP_INITIAL		= 1,	/* wait for startup event */
 	VRRP_SLAVE		= 2,	/* monitor state of master router */
 	VRRP_MASTER		= 3,	/* function as the forwarding router */
-	VRRP_SHUTDOWN		= 4	/* exiting.. */
+	VRRP_SHUTDOWN		= 4	/* session is exiting.. */
 } vrrp_state_t;
 
 /*
@@ -191,7 +191,7 @@ typedef enum {
 } impl_state_t;
 
 /*
- * Indicates any differences between two impl structures.
+ * Indicates any differences between two impl structures (used when reloading).
  */
 typedef enum {
 	IMPL_CMP_PRIM		= 1,	/* different vi_primary interface */
@@ -283,7 +283,8 @@ typedef enum {
 	CTRL_VIP_STATE		= 4,
 	CTRL_QUIT		= 5,
 	CTRL_CLEAR_COUNTERS	= 6,
-	CTRL_VERSION		= 7
+	CTRL_VERSION		= 7,
+	CTRL_LOG_LEVEL		= 8
 } ctrl_msg_t;
 
 /*
@@ -299,33 +300,29 @@ typedef struct {
  * portion ifdef'ed out. We need it for the gratuitous ARP packet.
  */
 typedef struct {
-	uint16_t	ar_hrd;			/* format of hardware addr */
-	uint16_t	ar_pro;			/* format of protocol addr */
-	uchar_t		ar_hln;			/* length of hardware addr */
-	uchar_t		ar_pln;			/* length of protocol addr */
-	uint16_t	ar_op;			/* ARP opcode (command) */
-	/*
-	 * Ethernet looks like this : This bit is variable sized however...
-	 */
-	uchar_t		ar_sha[ETH_ALEN];	/* sender hardware addr */
-	uchar_t		ar_sip[4];		/* sender IP addr */
-	uchar_t		ar_tha[ETH_ALEN];	/* target hardware addr */
-	uchar_t		ar_tip[4];		/* target IP addr */
+	uint16_t		ar_hrd;		/* format of hardware addr */
+	uint16_t		ar_pro;		/* format of protocol addr */
+	uchar_t			ar_hln;		/* length of hardware addr */
+	uchar_t			ar_pln;		/* length of protocol addr */
+	uint16_t		ar_op;		/* ARP opcode (command) */
+	uchar_t			ar_sha[ETH_ALEN];	/* sender hw addr */
+	uchar_t			ar_sip[4];		/* sender IP addr */
+	uchar_t			ar_tha[ETH_ALEN];	/* target hw addr */
+	uchar_t			ar_tip[4];		/* target IP addr */
 } arphdr_t;
 
 /*
  * Determines whether vrrp_setsockopt() should check a string or a binary value.
  */
 typedef enum {
-	VSC_STRING	= 1,
-	VSC_BIN		= 2
+	VSC_STRING		= 1,
+	VSC_BIN			= 2
 } vrrp_setso_cmp_t;
 
 /*
  * Log levels.
  */
 typedef enum {
-	LOG_ERR		= 0x1,
-	LOG_INFO	= 0x2,
-	LOG_DAEMON	= 0x4
+	LOG_INFO		= 1,
+	LOG_ERR			= 2
 } log_level_t;
