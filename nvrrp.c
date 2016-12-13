@@ -33,7 +33,7 @@ static char *vrrp_usage_str = "usage: nvrrp "
 	"   -h          show this help message";
 
 static pthread_rwlock_t		vrrp_list_rwlock;
-static vrrp_impl_t		vrrp_impl_array[MAX_NUM_VRRP_INTF];
+static vrrp_session_t		vrrp_session_array[MAX_NUM_VRRP_INTF];
 static boolean_t		vrrp_daemon = B_FALSE;
 static volatile boolean_t	vrrp_shutdown = B_FALSE;
 static socket_t			vrrp_unix_socket = 0;
@@ -197,7 +197,7 @@ vrrp_quit(const char *fmt, ...)
 {
 	va_list		args;
 	char		buf[512];
-	vrrp_impl_t	*impl;
+	vrrp_session_t	*session;
 	struct timespec	ts = { 0 };
 	int64_t		start = NANOSEC/2, inc = NANOSEC/10, max = NANOSEC;
 	int		iter = 30, ii, n, ret;
@@ -244,22 +244,24 @@ vrrp_quit(const char *fmt, ...)
 
 		} else {
 			for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-				impl = &vrrp_impl_array[ii];
+				session = &vrrp_session_array[ii];
 
 				/*
 				 * The following must be a result of shutting
 				 * down each session thread.
 				 */
-				assert(impl->vi_state == VRRP_SHUTDOWN ||
-				    impl->vi_impl_state == IMPL_FREE);
-				assert(impl->vi_primary.intf_name[0] == '\0');
-				assert(impl->vi_vip.intf_name[0] == '\0');
-				assert(impl->vi_primary.intf_mgmt == -1);
-				assert(impl->vi_vip.intf_mgmt == -1);
-				assert(impl->vi_primary.intf_mcast == -1);
-				assert(impl->vi_vip.intf_mcast == -1);
+				assert(session->vs_state == VRRP_SHUTDOWN ||
+				    session->vs_session_state == SS_FREE);
+				assert(session->vs_primary.intf_name[0] ==
+				    '\0');
+				assert(session->vs_vip.intf_name[0] == '\0');
+				assert(session->vs_primary.intf_mgmt == -1);
+				assert(session->vs_vip.intf_mgmt == -1);
+				assert(session->vs_primary.intf_mcast == -1);
+				assert(session->vs_vip.intf_mcast == -1);
 
-				(void) pthread_rwlock_destroy(&impl->vi_rwlock);
+				(void) pthread_rwlock_destroy(
+				    &session->vs_rwlock);
 			}
 
 			if (vrrp_log_fp != NULL) {
@@ -366,158 +368,159 @@ vrrp_time_elapsed(vrrp_time_t ts)
 }
 
 /*
- * Copy 'src' to 'dest', setting the VRRP state to initial and the impl state to
- * IMPL_INUSE.. but leaving the lock alone.
+ * Copy 'src' to 'dest', setting the VRRP state to initial and the session
+ * state to SS_INUSE but leaving the lock alone.
  */
 void
-vrrp_impl_inuse(vrrp_impl_t *dest, vrrp_impl_t *src)
+vrrp_session_inuse(vrrp_session_t *dest, vrrp_session_t *src)
 {
 	assert(dest != NULL);
 	assert(src != NULL);
 
-	memcpy(dest->vi_file, src->vi_file, sizeof (dest->vi_file));
-	memcpy(&dest->vi_primary, &src->vi_primary, sizeof (dest->vi_primary));
-	memcpy(&dest->vi_vip, &src->vi_vip, sizeof (dest->vi_vip));
-	dest->vi_version = src->vi_version;
-	dest->vi_vrid = src->vi_vrid;
-	dest->vi_priority = src->vi_priority;
-	dest->vi_adv_interval = src->vi_adv_interval;
-	dest->vi_allow_preemption = src->vi_allow_preemption;
-	dest->vi_master_adv_interval = src->vi_master_adv_interval;
-	dest->vi_master_down_interval = src->vi_master_down_interval;
-	dest->vi_skew_time = src->vi_skew_time;
-	dest->vi_timer_adv = src->vi_timer_adv;
-	dest->vi_timer_mdown = src->vi_timer_mdown;
-	dest->vi_iphdr_id = src->vi_iphdr_id;
-	dest->vi_counter_s2m = src->vi_counter_s2m;
-	dest->vi_counter_m2s = src->vi_counter_m2s;
-	dest->vi_counter_s2i = src->vi_counter_s2i;
-	dest->vi_counter_m2i = src->vi_counter_m2i;
-	dest->vi_counter_recvd = src->vi_counter_recvd;
-	dest->vi_counter_sent = src->vi_counter_sent;
-	dest->vi_counter_err = src->vi_counter_err;
+	(void) memcpy(dest->vs_file, src->vs_file, sizeof (dest->vs_file));
+	(void) memcpy(&dest->vs_primary, &src->vs_primary,
+	    sizeof (dest->vs_primary));
+	(void) memcpy(&dest->vs_vip, &src->vs_vip, sizeof (dest->vs_vip));
+	dest->vs_version = src->vs_version;
+	dest->vs_vrid = src->vs_vrid;
+	dest->vs_priority = src->vs_priority;
+	dest->vs_adv_interval = src->vs_adv_interval;
+	dest->vs_allow_preemption = src->vs_allow_preemption;
+	dest->vs_master_adv_interval = src->vs_master_adv_interval;
+	dest->vs_master_down_interval = src->vs_master_down_interval;
+	dest->vs_skew_time = src->vs_skew_time;
+	dest->vs_timer_adv = src->vs_timer_adv;
+	dest->vs_timer_mdown = src->vs_timer_mdown;
+	dest->vs_iphdr_id = src->vs_iphdr_id;
+	dest->vs_counter_s2m = src->vs_counter_s2m;
+	dest->vs_counter_m2s = src->vs_counter_m2s;
+	dest->vs_counter_s2i = src->vs_counter_s2i;
+	dest->vs_counter_m2i = src->vs_counter_m2i;
+	dest->vs_counter_recvd = src->vs_counter_recvd;
+	dest->vs_counter_sent = src->vs_counter_sent;
+	dest->vs_counter_err = src->vs_counter_err;
 
-	dest->vi_state = VRRP_INITIAL;
-	dest->vi_impl_state = IMPL_INUSE;
+	dest->vs_state = VRRP_INITIAL;
+	dest->vs_session_state = SS_INUSE;
 }
 
 /*
- * Zero out the given impl structure and mark it as free, but leave its
+ * Zero out the given session structure and mark it as free, but leave its
  * mutex alone (it's already been initialized).
  */
 void
-vrrp_impl_clear(vrrp_impl_t *impl)
+vrrp_session_clear(vrrp_session_t *session)
 {
-	assert(impl != NULL);
+	assert(session != NULL);
 
-	impl->vi_thread = 0;
-	impl->vi_impl_state = IMPL_FREE;
-	memset(impl->vi_file, 0, sizeof (impl->vi_file));
-	memset(&impl->vi_primary, 0, sizeof (impl->vi_primary));
-	impl->vi_primary.intf_mgmt = -1;
-	impl->vi_primary.intf_mcast = -1;
-	memset(&impl->vi_vip, 0, sizeof (impl->vi_vip));
-	impl->vi_vip.intf_mgmt = -1;
-	impl->vi_vip.intf_mcast = -1;
-	impl->vi_version = 0;
-	impl->vi_state = 0;
-	impl->vi_vrid = 0;
-	impl->vi_priority = 0;
-	impl->vi_adv_interval = 0;
-	impl->vi_allow_preemption = B_TRUE;
-	impl->vi_master_adv_interval = 0;
-	impl->vi_master_down_interval = 0;
-	impl->vi_skew_time = 0;
-	impl->vi_timer_adv = (vrrp_time_t) {0, 0};
-	impl->vi_timer_mdown = (vrrp_time_t) {0, 0};
-	impl->vi_iphdr_id = 0;
-	impl->vi_counter_s2m = 0;
-	impl->vi_counter_m2s = 0;
-	impl->vi_counter_s2i = 0;
-	impl->vi_counter_m2i = 0;
-	impl->vi_counter_recvd = 0;
-	impl->vi_counter_sent = 0;
-	impl->vi_counter_err = 0;
+	session->vs_thread = 0;
+	session->vs_session_state = SS_FREE;
+	(void) memset(session->vs_file, 0, sizeof (session->vs_file));
+	(void) memset(&session->vs_primary, 0, sizeof (session->vs_primary));
+	session->vs_primary.intf_mgmt = -1;
+	session->vs_primary.intf_mcast = -1;
+	(void) memset(&session->vs_vip, 0, sizeof (session->vs_vip));
+	session->vs_vip.intf_mgmt = -1;
+	session->vs_vip.intf_mcast = -1;
+	session->vs_version = 0;
+	session->vs_state = 0;
+	session->vs_vrid = 0;
+	session->vs_priority = 0;
+	session->vs_adv_interval = 0;
+	session->vs_allow_preemption = B_TRUE;
+	session->vs_master_adv_interval = 0;
+	session->vs_master_down_interval = 0;
+	session->vs_skew_time = 0;
+	session->vs_timer_adv = (vrrp_time_t) {0, 0};
+	session->vs_timer_mdown = (vrrp_time_t) {0, 0};
+	session->vs_iphdr_id = 0;
+	session->vs_counter_s2m = 0;
+	session->vs_counter_m2s = 0;
+	session->vs_counter_s2i = 0;
+	session->vs_counter_m2i = 0;
+	session->vs_counter_recvd = 0;
+	session->vs_counter_sent = 0;
+	session->vs_counter_err = 0;
 }
 
 /*
- * Compares two impl structures, returning zero if they're the same, minus one
- * if any of the interfaces have changed or one if only something in the VRRP
- * configuration changed. Note that this is called before the implementation
- * specific fields of either interface are populated.
+ * Compares two session structures, returning zero if they're the same, minus
+ * one if any of the interfaces have changed or one if only something in the
+ * VRRP configuration changed. Note that this is called before the
+ * implementation specific fields of either interface are populated.
  */
-impl_cmp_t
-vrrp_impl_cmp(vrrp_impl_t *a, vrrp_impl_t *b)
+session_cmp_t
+vrrp_session_cmp(vrrp_session_t *a, vrrp_session_t *b)
 {
 	intf_t		*ap, *av, *bp, *bv;
 
 	assert(a != NULL);
 	assert(b != NULL);
-	assert(memcmp(a->vi_file, b->vi_file, sizeof (a->vi_file)) == 0);
-	assert(a->vi_version == b->vi_version);
+	assert(memcmp(a->vs_file, b->vs_file, sizeof (a->vs_file)) == 0);
+	assert(a->vs_version == b->vs_version);
 
-	ap = &a->vi_primary;
-	bp = &b->vi_primary;
+	ap = &a->vs_primary;
+	bp = &b->vs_primary;
 
 	if (strcmp(ap->intf_name, bp->intf_name) != 0) {
-		return (IMPL_CMP_PRIM);
+		return (SC_PRIM);
 	}
 
-	av = &a->vi_vip;
-	bv = &b->vi_vip;
+	av = &a->vs_vip;
+	bv = &b->vs_vip;
 
 	if (strcmp(av->intf_name, bv->intf_name) != 0 ||
 	    strcmp(av->intf_addr_str, bv->intf_addr_str) != 0) {
-		return (IMPL_CMP_VIP);
+		return (SC_VIP);
 	}
 
-	if (a->vi_vrid != b->vi_vrid) {
-		return (IMPL_CMP_VRID);
+	if (a->vs_vrid != b->vs_vrid) {
+		return (SC_VRID);
 	}
 
-	if (a->vi_priority != b->vi_priority ||
-	    a->vi_adv_interval != b->vi_adv_interval ||
-	    a->vi_allow_preemption != b->vi_allow_preemption) {
-		return (IMPL_CMP_VRRP);
+	if (a->vs_priority != b->vs_priority ||
+	    a->vs_adv_interval != b->vs_adv_interval ||
+	    a->vs_allow_preemption != b->vs_allow_preemption) {
+		return (SC_VRRP);
 	}
 
-	return (IMPL_CMP_SAME);
+	return (SC_SAME);
 }
 
 void
-vrrp_show_impl(vrrp_impl_t *impl)
+vrrp_show_session(vrrp_session_t *session)
 {
 	char	prim_addr[IP_STRING_LEN], vip_addr[IP_STRING_LEN];
 	char	prim_nmask[IP_STRING_LEN], vip_nmask[IP_STRING_LEN];
 	int	pad = 18;
 
-	assert(impl != NULL);
+	assert(session != NULL);
 
-	if (inet_ntop(AF_INET, &impl->vi_primary.intf_addr,
+	if (inet_ntop(AF_INET, &session->vs_primary.intf_addr,
 	    prim_addr, sizeof (prim_addr)) == NULL) {
 		vrrp_log(LOG_ERR, "failed to convert primary address to string"
-		    " on %s", impl->vi_file);
+		    " on %s", session->vs_file);
 		return;
 	}
 
-	if (inet_ntop(AF_INET, &impl->vi_primary.intf_netmask,
+	if (inet_ntop(AF_INET, &session->vs_primary.intf_netmask,
 	    prim_nmask, sizeof (prim_nmask)) == NULL) {
 		vrrp_log(LOG_ERR, "failed to convert primary netmask to string"
-		    " on %s", impl->vi_file);
+		    " on %s", session->vs_file);
 		return;
 	}
 
-	if (inet_ntop(AF_INET, &impl->vi_vip.intf_addr,
+	if (inet_ntop(AF_INET, &session->vs_vip.intf_addr,
 	    vip_addr, sizeof (vip_addr)) == NULL) {
 		vrrp_log(LOG_ERR, "failed to convert vip address to string"
-		    " on %s", impl->vi_file);
+		    " on %s", session->vs_file);
 		return;
 	}
 
-	if (inet_ntop(AF_INET, &impl->vi_vip.intf_netmask,
+	if (inet_ntop(AF_INET, &session->vs_vip.intf_netmask,
 	    vip_nmask, sizeof (vip_nmask)) == NULL) {
 		vrrp_log(LOG_ERR, "failed to convert vip netmask to string"
-		    " on %s", impl->vi_file);
+		    " on %s", session->vs_file);
 		return;
 	}
 
@@ -554,40 +557,40 @@ vrrp_show_impl(vrrp_impl_t *impl)
 	    "%*s %lu\n"		/* number of received advertisements */
 	    "%*s %lu\n"		/* number of advertisements sent */
 	    "%*s %lu\n",	/* number of send errors */
-	    pad, "filename", impl->vi_file,
-	    pad, "primary intf", impl->vi_primary.intf_name,
-	    pad, "primary IP", impl->vi_primary.intf_addr_str,
+	    pad, "filename", session->vs_file,
+	    pad, "primary intf", session->vs_primary.intf_name,
+	    pad, "primary IP", session->vs_primary.intf_addr_str,
 	    pad, "primary addr", prim_addr,
 	    pad, "primary netmask", prim_nmask,
-	    pad, "primary MAC", impl->vi_primary.intf_mac_str,
-	    pad, "primary idx", impl->vi_primary.intf_index,
-	    pad, "vip intf", impl->vi_vip.intf_name,
-	    pad, "vip IP", impl->vi_vip.intf_addr_str,
+	    pad, "primary MAC", session->vs_primary.intf_mac_str,
+	    pad, "primary idx", session->vs_primary.intf_index,
+	    pad, "vip intf", session->vs_vip.intf_name,
+	    pad, "vip IP", session->vs_vip.intf_addr_str,
 	    pad, "vip addr", vip_addr,
 	    pad, "vip netmask", vip_nmask,
-	    pad, "vip MAC", impl->vi_vip.intf_mac_str,
-	    pad, "vip idx", impl->vi_vip.intf_index,
-	    pad, "vrid", impl->vi_vrid,
-	    pad, "priority", impl->vi_priority,
-	    pad, "adv interval", impl->vi_adv_interval,
-	    pad, "master adv int", impl->vi_master_adv_interval,
-	    pad, "master down int", impl->vi_master_down_interval,
-	    pad, "skew time", impl->vi_skew_time,
-	    pad, "timer adv", impl->vi_timer_adv.tv_sec,
-	    impl->vi_timer_adv.tv_nsec,
-	    pad, "timer mdown", impl->vi_timer_mdown.tv_sec,
-	    impl->vi_timer_mdown.tv_nsec,
-	    pad, "iphdr id", impl->vi_iphdr_id,
-	    pad, "version", impl->vi_version == VRRP_VERSION_2 ? "2" : "3",
-	    pad, "state", vrrp_state_str(impl->vi_state),
-	    pad, "allow preempt", impl->vi_allow_preemption ? "yes" : "no",
-	    pad, "slave to master", impl->vi_counter_s2m,
-	    pad, "master to slave", impl->vi_counter_m2s,
-	    pad, "slave to initial", impl->vi_counter_s2i,
-	    pad, "master to initial", impl->vi_counter_m2i,
-	    pad, "adverts recvd", impl->vi_counter_recvd,
-	    pad, "adverts sent", impl->vi_counter_sent,
-	    pad, "send errors", impl->vi_counter_err);
+	    pad, "vip MAC", session->vs_vip.intf_mac_str,
+	    pad, "vip idx", session->vs_vip.intf_index,
+	    pad, "vrid", session->vs_vrid,
+	    pad, "priority", session->vs_priority,
+	    pad, "adv interval", session->vs_adv_interval,
+	    pad, "master adv int", session->vs_master_adv_interval,
+	    pad, "master down int", session->vs_master_down_interval,
+	    pad, "skew time", session->vs_skew_time,
+	    pad, "timer adv", session->vs_timer_adv.tv_sec,
+	    session->vs_timer_adv.tv_nsec,
+	    pad, "timer mdown", session->vs_timer_mdown.tv_sec,
+	    session->vs_timer_mdown.tv_nsec,
+	    pad, "iphdr id", session->vs_iphdr_id,
+	    pad, "version", session->vs_version == VRRP_VERSION_2 ? "2" : "3",
+	    pad, "state", vrrp_state_str(session->vs_state),
+	    pad, "allow preempt", session->vs_allow_preemption ? "yes" : "no",
+	    pad, "slave to master", session->vs_counter_s2m,
+	    pad, "master to slave", session->vs_counter_m2s,
+	    pad, "slave to initial", session->vs_counter_s2i,
+	    pad, "master to initial", session->vs_counter_m2i,
+	    pad, "adverts recvd", session->vs_counter_recvd,
+	    pad, "adverts sent", session->vs_counter_sent,
+	    pad, "send errors", session->vs_counter_err);
 }
 
 void
@@ -619,33 +622,33 @@ vrrp_show_pkt(vrrp_pkt_t *vpkt, struct in_addr src_addr)
 }
 
 /*
- * Return the first empty intf_impl with its rwlock held.
+ * Return the first empty intf_session with its rwlock held.
  */
-vrrp_impl_t *
+vrrp_session_t *
 vrrp_alloc(void)
 {
-	vrrp_impl_t	*impl;
+	vrrp_session_t	*session;
 	int		ii;
 
 	vrrp_rwlock_wrlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
-		vrrp_rwlock_wrlock(&impl->vi_rwlock);
+		session = &vrrp_session_array[ii];
+		vrrp_rwlock_wrlock(&session->vs_rwlock);
 
-		if (impl->vi_impl_state == IMPL_FREE) {
+		if (session->vs_session_state == SS_FREE) {
 			break;
 		}
-		vrrp_rwlock_unlock(&impl->vi_rwlock);
+		vrrp_rwlock_unlock(&session->vs_rwlock);
 	}
 
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
 
 	if (ii == MAX_NUM_VRRP_INTF) {
-		impl = NULL;
+		session = NULL;
 	}
 
-	return (impl);
+	return (session);
 }
 
 /*
@@ -655,7 +658,7 @@ vrrp_alloc(void)
 vrrp_state_t
 vrrp_get_state(char *vip)
 {
-	vrrp_impl_t	*impl;
+	vrrp_session_t	*session;
 	vrrp_state_t	state;
 	int		ii;
 
@@ -664,18 +667,18 @@ vrrp_get_state(char *vip)
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
-		vrrp_rwlock_rdlock(&impl->vi_rwlock);
+		session = &vrrp_session_array[ii];
+		vrrp_rwlock_rdlock(&session->vs_rwlock);
 
-		if (strncmp(impl->vi_vip.intf_name, vip,
-		    sizeof (impl->vi_vip.intf_name)) == 0) {
-			state = impl->vi_state;
-			vrrp_rwlock_unlock(&impl->vi_rwlock);
+		if (strncmp(session->vs_vip.intf_name, vip,
+		    sizeof (session->vs_vip.intf_name)) == 0) {
+			state = session->vs_state;
+			vrrp_rwlock_unlock(&session->vs_rwlock);
 			vrrp_rwlock_unlock(&vrrp_list_rwlock);
 			return (state);
 		}
 
-		vrrp_rwlock_unlock(&impl->vi_rwlock);
+		vrrp_rwlock_unlock(&session->vs_rwlock);
 	}
 
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
@@ -689,36 +692,36 @@ vrrp_get_state(char *vip)
 void
 vrrp_clear_counters(void)
 {
-	vrrp_impl_t	*impl;
+	vrrp_session_t	*session;
 	int		ii;
 
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
-		vrrp_rwlock_rdlock(&impl->vi_rwlock);
+		session = &vrrp_session_array[ii];
+		vrrp_rwlock_rdlock(&session->vs_rwlock);
 
-		if (impl->vi_impl_state != IMPL_FREE) {
-			impl->vi_counter_s2m = 0;
-			impl->vi_counter_m2s = 0;
-			impl->vi_counter_s2i = 0;
-			impl->vi_counter_m2i = 0;
-			impl->vi_counter_recvd = 0;
-			impl->vi_counter_sent = 0;
-			impl->vi_counter_err = 0;
+		if (session->vs_session_state != SS_FREE) {
+			session->vs_counter_s2m = 0;
+			session->vs_counter_m2s = 0;
+			session->vs_counter_s2i = 0;
+			session->vs_counter_m2i = 0;
+			session->vs_counter_recvd = 0;
+			session->vs_counter_sent = 0;
+			session->vs_counter_err = 0;
 		}
 
-		vrrp_rwlock_unlock(&impl->vi_rwlock);
+		vrrp_rwlock_unlock(&session->vs_rwlock);
 	}
 
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
 }
 
-impl_find_t
+session_find_t
 vrrp_find_and_lock(char *filename, char *primary, char *vip,
-    vrrp_impl_t **ret_impl)
+    vrrp_session_t **ret_session)
 {
-	vrrp_impl_t	*impl;
+	vrrp_session_t	*session;
 	int		ii, ret;
 
 	assert(filename != NULL);
@@ -726,57 +729,57 @@ vrrp_find_and_lock(char *filename, char *primary, char *vip,
 	assert(vip != NULL);
 
 	/*
-	 * First try to find an impl with the given filename.
+	 * First try to find an session with the given filename.
 	 */
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
-		vrrp_rwlock_rdlock(&impl->vi_rwlock);
+		session = &vrrp_session_array[ii];
+		vrrp_rwlock_rdlock(&session->vs_rwlock);
 
-		if (impl->vi_impl_state != IMPL_FREE) {
-			if (strcasecmp(impl->vi_file, filename) == 0) {
+		if (session->vs_session_state != SS_FREE) {
+			if (strcasecmp(session->vs_file, filename) == 0) {
 				break;
 			}
 		}
 
-		vrrp_rwlock_unlock(&impl->vi_rwlock);
-		impl = NULL;
+		vrrp_rwlock_unlock(&session->vs_rwlock);
+		session = NULL;
 	}
 
-	if (impl != NULL) {
+	if (session != NULL) {
 		pthread_rwlock_unlock(&vrrp_list_rwlock);
-		*ret_impl = impl;
+		*ret_session = session;
 
-		return (IMPL_FIND_LOCKED);
+		return (SF_LOCKED);
 	}
 
-	ret = IMPL_FIND_NONE;
+	ret = SF_NONE;
 
 	/*
 	 * Didn't find one. Take a moment to check if we're trying to use either
 	 * primary or VRRP interfaces that are already in use.
 	 */
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
-		vrrp_rwlock_rdlock(&impl->vi_rwlock);
+		session = &vrrp_session_array[ii];
+		vrrp_rwlock_rdlock(&session->vs_rwlock);
 
-		if (impl->vi_impl_state != IMPL_FREE) {
-			if (strcasecmp(impl->vi_primary.intf_name,
+		if (session->vs_session_state != SS_FREE) {
+			if (strcasecmp(session->vs_primary.intf_name,
 			    primary) == 0) {
-				vrrp_rwlock_unlock(&impl->vi_rwlock);
-				ret = IMPL_FIND_INVAL;
+				vrrp_rwlock_unlock(&session->vs_rwlock);
+				ret = SF_INVAL;
 				break;
 			}
-			if (strcasecmp(impl->vi_vip.intf_name, vip) == 0) {
-				vrrp_rwlock_unlock(&impl->vi_rwlock);
-				ret = IMPL_FIND_INVAL;
+			if (strcasecmp(session->vs_vip.intf_name, vip) == 0) {
+				vrrp_rwlock_unlock(&session->vs_rwlock);
+				ret = SF_INVAL;
 				break;
 			}
 		}
 
-		vrrp_rwlock_unlock(&impl->vi_rwlock);
-		impl = NULL;
+		vrrp_rwlock_unlock(&session->vs_rwlock);
+		session = NULL;
 	}
 
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
@@ -1067,14 +1070,14 @@ vrrp_intf_setup_vip(intf_t *vip)
 }
 
 int
-vrrp_bcast_garp(vrrp_impl_t *impl)
+vrrp_bcast_garp(vrrp_session_t *session)
 {
 	char			buf[sizeof (arphdr_t) + ETH_HLEN] = { 0 };
 	struct sockaddr_ll	dest = { 0 };
 	struct ether_header	*ehdr;
 	arphdr_t		*arphdr;
-	char			*mac_addr = impl->vi_vip.intf_mac_addr;
-	struct in_addr		vip_addr = impl->vi_vip.intf_addr;
+	char			*mac_addr = session->vs_vip.intf_mac_addr;
+	struct in_addr		vip_addr = session->vs_vip.intf_addr;
 
 	/*
 	 * Assert that our intf_mac_addr is the expected length according to
@@ -1084,7 +1087,7 @@ vrrp_bcast_garp(vrrp_impl_t *impl)
 	assert(vrrp_garp_socket != -1);
 
 	dest.sll_family = AF_PACKET;
-	dest.sll_ifindex = impl->vi_vip.intf_index;
+	dest.sll_ifindex = session->vs_vip.intf_index;
 	(void) memcpy(&dest.sll_addr, mac_addr, sizeof (dest.sll_addr));
 	dest.sll_halen = MAC_ADDR_LEN;
 
@@ -1108,7 +1111,7 @@ vrrp_bcast_garp(vrrp_impl_t *impl)
 	if (sendto(vrrp_garp_socket, &buf, sizeof (buf), 0,
 	    (struct sockaddr *)&dest, sizeof (dest)) < 0) {
 		vrrp_log(LOG_ERR, "failed to send GARP on %s (%s)",
-		    impl->vi_file, strerror(errno));
+		    session->vs_file, strerror(errno));
 		return (EIO);
 	}
 
@@ -1116,7 +1119,7 @@ vrrp_bcast_garp(vrrp_impl_t *impl)
 }
 
 int
-vrrp_adv_send(vrrp_impl_t *impl, prio_t prio)
+vrrp_adv_send(vrrp_session_t *session, prio_t prio)
 {
 	char			buf[IP_BUF_LEN] = { 0 };
 	struct sockaddr_in	src = { 0 }, dest = { 0 };
@@ -1139,7 +1142,7 @@ vrrp_adv_send(vrrp_impl_t *impl, prio_t prio)
 	assert(ret == 1);
 	dest.sin_family = AF_INET;
 
-	src.sin_addr.s_addr = impl->vi_primary.intf_addr.s_addr;
+	src.sin_addr.s_addr = session->vs_primary.intf_addr.s_addr;
 	src.sin_family = AF_INET;
 
 	/*
@@ -1161,7 +1164,7 @@ vrrp_adv_send(vrrp_impl_t *impl, prio_t prio)
 	iphdr->version = VRRP_IP_VERSION;
 	iphdr->tos = 0;
 	iphdr->tot_len = htons(sizeof (*iphdr) + VRRP_PKT_LEN);
-	iphdr->id = htons(impl->vi_iphdr_id++);
+	iphdr->id = htons(session->vs_iphdr_id++);
 	iphdr->frag_off = 0;
 	iphdr->ttl = VRRP_TTL;
 	iphdr->protocol = VRRP_PROTOCOL;
@@ -1174,17 +1177,17 @@ vrrp_adv_send(vrrp_impl_t *impl, prio_t prio)
 	 */
 	vpkt = (vrrp_pkt_t *)((char *)iphdr + sizeof (*iphdr));
 	vpkt->vpkt_type_vers = (VRRP_VERSION_3 << 4) | VRRP_PKT_ADVERT;
-	vpkt->vpkt_vrid = impl->vi_vrid;
+	vpkt->vpkt_vrid = session->vs_vrid;
 	vpkt->vpkt_priority = prio;
 	vpkt->vpkt_addr_count = 1;
-	vpkt->vpkt_adv_interval = impl->vi_adv_interval / CENTISEC;
+	vpkt->vpkt_adv_interval = session->vs_adv_interval / CENTISEC;
 	vpkt->vpkt_csum = 0;
 
 	/*
 	 * ..with its single VIP address.
 	 */
 	ipa = (struct in_addr *)((char *)vpkt + sizeof (*vpkt));
-	*ipa = impl->vi_vip.intf_addr;
+	*ipa = session->vs_vip.intf_addr;
 
 	/*
 	 * Now compute the checksum.
@@ -1199,27 +1202,27 @@ vrrp_adv_send(vrrp_impl_t *impl, prio_t prio)
 	(void) in_csum((ushort_t *)&ph, sizeof (ph), 0, &acc);
 	vpkt->vpkt_csum = in_csum((ushort_t *)vpkt, VRRP_PKT_LEN, acc, NULL);
 
-	if (sendmsg(impl->vi_vip.intf_mcast, &msghdr, MSG_DONTROUTE) == -1) {
+	if (sendmsg(session->vs_vip.intf_mcast, &msghdr, MSG_DONTROUTE) == -1) {
 		ret = errno;
 		vrrp_log(LOG_ERR, "failed to send adv on %s (%s)",
-		    impl->vi_vip.intf_name, strerror(ret));
+		    session->vs_vip.intf_name, strerror(ret));
 
-		vrrp_rwlock_wrlock(&impl->vi_rwlock);
-		impl->vi_counter_err++;
-		vrrp_rwlock_unlock(&impl->vi_rwlock);
+		vrrp_rwlock_wrlock(&session->vs_rwlock);
+		session->vs_counter_err++;
+		vrrp_rwlock_unlock(&session->vs_rwlock);
 
 		return (ret);
 	}
 
-	vrrp_rwlock_wrlock(&impl->vi_rwlock);
-	impl->vi_counter_sent++;
-	vrrp_rwlock_unlock(&impl->vi_rwlock);
+	vrrp_rwlock_wrlock(&session->vs_rwlock);
+	session->vs_counter_sent++;
+	vrrp_rwlock_unlock(&session->vs_rwlock);
 
 	return (0);
 }
 
 vrrp_pkt_t *
-vrrp_adv_recv(vrrp_impl_t *impl, vrrp_time_t to, struct sockaddr_in *src)
+vrrp_adv_recv(vrrp_session_t *session, vrrp_time_t to, struct sockaddr_in *src)
 {
 	char			buf[IP_BUF_LEN] = { 0 };
 	vrrp_time_t		ts;
@@ -1248,30 +1251,30 @@ vrrp_adv_recv(vrrp_impl_t *impl, vrrp_time_t to, struct sockaddr_in *src)
 	tv.tv_usec = ts.tv_nsec / MICROSEC;
 
 	if (tv.tv_sec != 0 || tv.tv_usec != 0) {
-		if (vrrp_setsockopt(impl->vi_primary.intf_mcast, SOL_SOCKET,
+		if (vrrp_setsockopt(session->vs_primary.intf_mcast, SOL_SOCKET,
 		    SO_RCVTIMEO, &tv, &tv_ret, sizeof (tv), VSC_BIN) < 0) {
 			vrrp_log(LOG_ERR, "failed to set timeout on %s",
-			    impl->vi_file);
+			    session->vs_file);
 			return (NULL);
 		}
 	} else {
 		return (NULL);
 	}
 
-	if ((len = recvmsg(impl->vi_primary.intf_mcast, &msghdr, 0)) == -1) {
+	if ((len = recvmsg(session->vs_primary.intf_mcast, &msghdr, 0)) == -1) {
 		if (errno == EAGAIN) {
 			/* timed out */
 			return (NULL);
 		}
 		vrrp_log(LOG_ERR, "failed to receive on %s (%s)",
-		    impl->vi_file, strerror(errno));
+		    session->vs_file, strerror(errno));
 		return (NULL);
 	}
 
 	/*
 	 * Drop advertisements sent from our own VRRP interface.
 	 */
-	if (src->sin_addr.s_addr == impl->vi_primary.intf_addr.s_addr) {
+	if (src->sin_addr.s_addr == session->vs_primary.intf_addr.s_addr) {
 		return (NULL);
 	}
 
@@ -1282,16 +1285,17 @@ vrrp_adv_recv(vrrp_impl_t *impl, vrrp_time_t to, struct sockaddr_in *src)
 	vpkt = (vrrp_pkt_t *)((char *)iphdr + (iphdr->ihl << 2));
 
 	if (len < (sizeof (struct iphdr) + VRRP_PKT_LEN)) {
-		vrrp_log(LOG_ERR, "incorrect pkt size on %s", impl->vi_file);
+		vrrp_log(LOG_ERR, "incorrect pkt size on %s", session->vs_file);
 		return (NULL);
 
 	} else if (iphdr->version != VRRP_IP_VERSION) {
-		vrrp_log(LOG_ERR, "incorrect addr family on %s", impl->vi_file);
+		vrrp_log(LOG_ERR, "incorrect addr family on %s",
+		    session->vs_file);
 		return (NULL);
 
 	} else if (iphdr->protocol != VRRP_PROTOCOL) {
 		vrrp_log(LOG_ERR, "incorrect pkt protocol on %s",
-		    impl->vi_file);
+		    session->vs_file);
 		return (NULL);
 
 	} else if (iphdr->ttl != VRRP_TTL) {
@@ -1300,34 +1304,35 @@ vrrp_adv_recv(vrrp_impl_t *impl, vrrp_time_t to, struct sockaddr_in *src)
 
 	} else if ((vpkt->vpkt_type_vers >> 4) != VRRP_VERSION_3) {
 		vrrp_log(LOG_ERR, "incorrect VRRP version on %s",
-		    impl->vi_file);
+		    session->vs_file);
 		return (NULL);
 
 	} else if ((vpkt->vpkt_type_vers & 0xf) != VRRP_PKT_ADVERT) {
 		vrrp_log(LOG_ERR, "incorrect pkt type on %s",
-		    impl->vi_file);
+		    session->vs_file);
 		return (NULL);
 
-	} else if (vpkt->vpkt_vrid != impl->vi_vrid) {
+	} else if (vpkt->vpkt_vrid != session->vs_vrid) {
 		vrrp_log(LOG_ERR, "incorrect vrid on %s (%u, %u)",
-		    impl->vi_file, vpkt->vpkt_vrid, impl->vi_vrid);
+		    session->vs_file, vpkt->vpkt_vrid, session->vs_vrid);
 		return (NULL);
 
 	} else if (vpkt->vpkt_auth_type != VRRP_AUTH_TYPE0) {
 		vrrp_log(LOG_ERR, "incorrect pkt auth on %s (%d)",
-		    impl->vi_file, vpkt->vpkt_auth_type);
+		    session->vs_file, vpkt->vpkt_auth_type);
 		return (NULL);
 
 	} else if (vpkt->vpkt_addr_count != 1) {
-		vrrp_log(LOG_ERR, "incorrect addr count on %s", impl->vi_file);
+		vrrp_log(LOG_ERR, "incorrect addr count on %s",
+		    session->vs_file);
 		return (NULL);
 	}
 
 	ipa = (struct in_addr *)((char *)vpkt + sizeof (*vpkt));
 
-	if (impl->vi_vip.intf_addr.s_addr != ipa->s_addr) {
-		vrrp_log(LOG_ERR, "wrong vip on %s (%s, %s)", impl->vi_file,
-		    inet_ntoa(impl->vi_vip.intf_addr),
+	if (session->vs_vip.intf_addr.s_addr != ipa->s_addr) {
+		vrrp_log(LOG_ERR, "wrong vip on %s (%s, %s)", session->vs_file,
+		    inet_ntoa(session->vs_vip.intf_addr),
 		    inet_ntoa(*ipa));
 		return (NULL);
 	}
@@ -1342,58 +1347,58 @@ vrrp_adv_recv(vrrp_impl_t *impl, vrrp_time_t to, struct sockaddr_in *src)
 	(void) in_csum((ushort_t *)&ph, sizeof (ph), 0, &acc);
 
 	if (in_csum((ushort_t *)vpkt, VRRP_PKT_LEN, acc, NULL) != 0) {
-		vrrp_log(LOG_ERR, "bad chksum on %s %s", impl->vi_file,
+		vrrp_log(LOG_ERR, "bad chksum on %s %s", session->vs_file,
 		    inet_ntoa(*(struct in_addr *)ipa));
 		return (NULL);
 	}
 
-	vrrp_rwlock_wrlock(&impl->vi_rwlock);
-	impl->vi_counter_recvd++;
-	vrrp_rwlock_unlock(&impl->vi_rwlock);
+	vrrp_rwlock_wrlock(&session->vs_rwlock);
+	session->vs_counter_recvd++;
+	vrrp_rwlock_unlock(&session->vs_rwlock);
 
 	return (vpkt);
 }
 
 /*
- * Note that vi_state can only be changed by the session thread itself, so the
- * locking around it is really only here for when displaying the impl or
+ * Note that vs_state can only be changed by the session thread itself, so the
+ * locking around it is really only here for when displaying the session or
  * querying the state.
  */
 int
-vrrp_state_set(vrrp_impl_t *impl, vrrp_state_t new_state)
+vrrp_state_set(vrrp_session_t *session, vrrp_state_t new_state)
 {
 	vrrp_state_t	old_state;
 	int		ret = 0;
 
 	assert(new_state > 0);
 
-	vrrp_rwlock_wrlock(&impl->vi_rwlock);
-	assert(impl->vi_state != new_state);
+	vrrp_rwlock_wrlock(&session->vs_rwlock);
+	assert(session->vs_state != new_state);
 
-	old_state = impl->vi_state;
-	impl->vi_state = new_state;
+	old_state = session->vs_state;
+	session->vs_state = new_state;
 
 	if (old_state == VRRP_MASTER) {
 		if (new_state == VRRP_SLAVE) {
-			impl->vi_counter_m2s++;
+			session->vs_counter_m2s++;
 		} else if (new_state == VRRP_INITIAL) {
-			impl->vi_counter_m2i++;
+			session->vs_counter_m2i++;
 		}
 	} else if (old_state == VRRP_SLAVE) {
 		if (new_state == VRRP_MASTER) {
-			impl->vi_counter_s2m++;
+			session->vs_counter_s2m++;
 		} else if (new_state == VRRP_INITIAL) {
-			impl->vi_counter_s2i++;
+			session->vs_counter_s2i++;
 		}
 	}
 
-	vrrp_rwlock_unlock(&impl->vi_rwlock);
+	vrrp_rwlock_unlock(&session->vs_rwlock);
 
 	vrrp_log(LOG_ERR, "%s -> %s : %s",
 	    vrrp_state_str(old_state), vrrp_state_str(new_state),
-	    impl->vi_file);
+	    session->vs_file);
 
-	switch (impl->vi_state) {
+	switch (session->vs_state) {
 	case VRRP_INITIAL:
 		/*
 		 * Under normal circumstances we shouldn't go back to initial
@@ -1407,20 +1412,20 @@ vrrp_state_set(vrrp_impl_t *impl, vrrp_state_t new_state)
 		break;
 
 	case VRRP_SLAVE:
-		ret = vrrp_intf_down(&impl->vi_vip);
+		ret = vrrp_intf_down(&session->vs_vip);
 		break;
 
 	case VRRP_SHUTDOWN:
-		(void) vrrp_intf_down(&impl->vi_vip);
-		vrrp_intf_teardown(&impl->vi_vip);
-		vrrp_intf_teardown(&impl->vi_primary);
+		(void) vrrp_intf_down(&session->vs_vip);
+		vrrp_intf_teardown(&session->vs_vip);
+		vrrp_intf_teardown(&session->vs_primary);
 
-		impl->vi_timer_adv = (vrrp_time_t) {0, 0};
-		impl->vi_timer_mdown = (vrrp_time_t) {0, 0};
+		session->vs_timer_adv = (vrrp_time_t) {0, 0};
+		session->vs_timer_mdown = (vrrp_time_t) {0, 0};
 		break;
 
 	case VRRP_MASTER:
-		ret = vrrp_intf_setup_vip(&impl->vi_vip);
+		ret = vrrp_intf_setup_vip(&session->vs_vip);
 		break;
 
 	default:
@@ -1432,12 +1437,12 @@ vrrp_state_set(vrrp_impl_t *impl, vrrp_state_t new_state)
 }
 
 int
-vrrp_state_initial(vrrp_impl_t *impl)
+vrrp_state_initial(vrrp_session_t *session)
 {
 	int 	ret;
 
-	if (impl->vi_priority == VRRP_PRIO_OWNER) {
-		if ((ret = vrrp_intf_setup_vip(&impl->vi_vip)) != 0) {
+	if (session->vs_priority == VRRP_PRIO_OWNER) {
+		if ((ret = vrrp_intf_setup_vip(&session->vs_vip)) != 0) {
 			return (ret);
 		}
 
@@ -1446,29 +1451,29 @@ vrrp_state_initial(vrrp_impl_t *impl)
 		 * the fallback state for such errors. If they persist, we'll
 		 * handle them accordingly once we're in master state.
 		 */
-		(void) vrrp_adv_send(impl, impl->vi_priority);
+		(void) vrrp_adv_send(session, session->vs_priority);
 
-		(void) vrrp_bcast_garp(impl);
+		(void) vrrp_bcast_garp(session);
 
-		impl->vi_timer_adv = vrrp_time_add(impl->vi_adv_interval);
+		session->vs_timer_adv = vrrp_time_add(session->vs_adv_interval);
 
-		if ((ret = vrrp_state_set(impl, VRRP_MASTER)) != 0) {
+		if ((ret = vrrp_state_set(session, VRRP_MASTER)) != 0) {
 			vrrp_log(LOG_ERR, "failed to set master state on %s",
-			    impl->vi_file);
+			    session->vs_file);
 			return (ret);
 		}
 
 	} else {
-		impl->vi_master_adv_interval = impl->vi_adv_interval;
+		session->vs_master_adv_interval = session->vs_adv_interval;
 
-		assert(impl->vi_master_down_interval != 0);
+		assert(session->vs_master_down_interval != 0);
 
-		impl->vi_timer_mdown =
-		    vrrp_time_add(impl->vi_master_down_interval);
+		session->vs_timer_mdown =
+		    vrrp_time_add(session->vs_master_down_interval);
 
-		if ((ret = vrrp_state_set(impl, VRRP_SLAVE)) != 0) {
+		if ((ret = vrrp_state_set(session, VRRP_SLAVE)) != 0) {
 			vrrp_log(LOG_ERR, "failed to set slave state on %s",
-			    impl->vi_file);
+			    session->vs_file);
 			return (ret);
 		}
 	}
@@ -1482,70 +1487,72 @@ vrrp_state_initial(vrrp_impl_t *impl)
  * are kept as verbatim as possible for maintainability and readability.
  */
 int
-vrrp_state_slave(vrrp_impl_t *impl)
+vrrp_state_slave(vrrp_session_t *session)
 {
 	vrrp_pkt_t		*vpkt;
 	struct sockaddr_in	src;
 	int			ret;
 
-	if (vrrp_shutdown || impl->vi_impl_state == IMPL_EXIT) {
-		if ((ret = vrrp_state_set(impl, VRRP_SHUTDOWN)) != 0) {
+	if (vrrp_shutdown || session->vs_session_state == SS_EXIT) {
+		if ((ret = vrrp_state_set(session, VRRP_SHUTDOWN)) != 0) {
 			vrrp_log(LOG_ERR, "failed to set shutdown state on %s",
-			    impl->vi_file);
+			    session->vs_file);
 			return (ret);
 		}
 
 		return (0);
 	}
 
-	vpkt = vrrp_adv_recv(impl, impl->vi_timer_mdown, &src);
+	vpkt = vrrp_adv_recv(session, session->vs_timer_mdown, &src);
 
 	/*
 	 * Switch to master if the master down timer has expired, but first
 	 * check if the primary interface is up. If it's not, fall back to
 	 * initial state.
 	 */
-	if (vrrp_time_elapsed(impl->vi_timer_mdown)) {
-		if (!vrrp_intf_is_up(&impl->vi_primary)) {
+	if (vrrp_time_elapsed(session->vs_timer_mdown)) {
+		if (!vrrp_intf_is_up(&session->vs_primary)) {
 			vrrp_log(LOG_INFO, "primary is down on %s, moving from "
-			    "slave to initial state", impl->vi_file);
+			    "slave to initial state", session->vs_file);
 
-			if ((ret = vrrp_state_set(impl, VRRP_INITIAL)) != 0) {
+			if ((ret = vrrp_state_set(session,
+			    VRRP_INITIAL)) != 0) {
 				vrrp_log(LOG_ERR, "unable to set initial state"
-				    " on %s", impl->vi_file);
+				    " on %s", session->vs_file);
 				return (ret);
 			}
 
 			return (0);
 		}
 
-		if ((ret = vrrp_intf_setup_vip(&impl->vi_vip)) != 0) {
+		if ((ret = vrrp_intf_setup_vip(&session->vs_vip)) != 0) {
 			return (ret);
 		}
 
-		if ((ret = vrrp_adv_send(impl, impl->vi_priority)) != 0) {
+		if ((ret = vrrp_adv_send(session, session->vs_priority)) != 0) {
 			vrrp_log(LOG_INFO, "failed to send advert on %s, moving"
-			    " from slave to initial state", impl->vi_file);
+			    " from slave to initial state", session->vs_file);
 
-			if ((ret = vrrp_state_set(impl, VRRP_INITIAL)) != 0) {
+			if ((ret = vrrp_state_set(session,
+			    VRRP_INITIAL)) != 0) {
 				vrrp_log(LOG_ERR, "unable to set initial state"
-				    " on %s", impl->vi_file);
+				    " on %s", session->vs_file);
 				return (ret);
 			}
 
 			return (0);
 		}
 
-		if ((ret = vrrp_bcast_garp(impl)) != 0) {
+		if ((ret = vrrp_bcast_garp(session)) != 0) {
 			return (ret);
 		}
 
-		impl->vi_timer_adv = vrrp_time_add(impl->vi_adv_interval);
-		impl->vi_timer_mdown = (vrrp_time_t) {0, 0};
+		session->vs_timer_adv = vrrp_time_add(session->vs_adv_interval);
+		session->vs_timer_mdown = (vrrp_time_t) {0, 0};
 
-		if ((ret = vrrp_state_set(impl, VRRP_MASTER)) != 0) {
+		if ((ret = vrrp_state_set(session, VRRP_MASTER)) != 0) {
 			vrrp_log(LOG_ERR, "failed to set master state on %s",
-			    impl->vi_file);
+			    session->vs_file);
 			return (ret);
 		}
 
@@ -1554,21 +1561,21 @@ vrrp_state_slave(vrrp_impl_t *impl)
 
 	if (vpkt != NULL && (vpkt->vpkt_type_vers & 0xf) == VRRP_PKT_ADVERT) {
 		if (vpkt->vpkt_priority == VRRP_PRIO_ZERO) {
-			impl->vi_timer_mdown =
-			    vrrp_time_add(impl->vi_skew_time);
+			session->vs_timer_mdown =
+			    vrrp_time_add(session->vs_skew_time);
 
-		} else if (!impl->vi_allow_preemption ||
-		    vpkt->vpkt_priority >= impl->vi_priority) {
+		} else if (!session->vs_allow_preemption ||
+		    vpkt->vpkt_priority >= session->vs_priority) {
 
-			impl->vi_master_adv_interval =
+			session->vs_master_adv_interval =
 			    vpkt->vpkt_adv_interval * CENTISEC;
 
-			impl->vi_master_down_interval =
-			    ((3 * impl->vi_master_adv_interval) +
-			    impl->vi_skew_time);
+			session->vs_master_down_interval =
+			    ((3 * session->vs_master_adv_interval) +
+			    session->vs_skew_time);
 
-			impl->vi_timer_mdown =
-			    vrrp_time_add(impl->vi_master_down_interval);
+			session->vs_timer_mdown =
+			    vrrp_time_add(session->vs_master_down_interval);
 		} else {
 			/* ignore the advertisement */
 		}
@@ -1578,101 +1585,105 @@ vrrp_state_slave(vrrp_impl_t *impl)
 }
 
 int
-vrrp_state_master(vrrp_impl_t *impl)
+vrrp_state_master(vrrp_session_t *session)
 {
 	vrrp_pkt_t		*vpkt;
 	struct sockaddr_in	src;
 	int			ret;
 
-	if (vrrp_shutdown || impl->vi_impl_state == IMPL_EXIT) {
-		if ((ret = vrrp_adv_send(impl, VRRP_PRIO_ZERO)) != 0) {
+	if (vrrp_shutdown || session->vs_session_state == SS_EXIT) {
+		if ((ret = vrrp_adv_send(session, VRRP_PRIO_ZERO)) != 0) {
 			return (ret);
 		}
 
-		if ((ret = vrrp_state_set(impl, VRRP_SHUTDOWN)) != 0) {
+		if ((ret = vrrp_state_set(session, VRRP_SHUTDOWN)) != 0) {
 			vrrp_log(LOG_ERR, "failed to set shutdown state on %s",
-			    impl->vi_file);
+			    session->vs_file);
 			return (ret);
 		}
 
 		return (0);
 	}
 
-	vpkt = vrrp_adv_recv(impl, impl->vi_timer_adv, &src);
+	vpkt = vrrp_adv_recv(session, session->vs_timer_adv, &src);
 
-	if (vrrp_time_elapsed(impl->vi_timer_adv)) {
-		if (!vrrp_intf_is_up(&impl->vi_primary)) {
+	if (vrrp_time_elapsed(session->vs_timer_adv)) {
+		if (!vrrp_intf_is_up(&session->vs_primary)) {
 			vrrp_log(LOG_INFO, "primary is down on %s, moving from"
-			    " master to initial state", impl->vi_file);
+			    " master to initial state", session->vs_file);
 
-			if ((ret = vrrp_state_set(impl, VRRP_INITIAL)) != 0) {
+			if ((ret = vrrp_state_set(session,
+			    VRRP_INITIAL)) != 0) {
 				vrrp_log(LOG_ERR, "unable to set initial state"
-				    " on %s", impl->vi_file);
+				    " on %s", session->vs_file);
 				return (ret);
 			}
 
 			return (0);
 		}
 
-		if ((ret = vrrp_adv_send(impl, impl->vi_priority)) != 0) {
+		if ((ret = vrrp_adv_send(session, session->vs_priority)) != 0) {
 			vrrp_log(LOG_INFO, "failed to send advert on %s, "
 			    "moving from master to initial state",
-			    impl->vi_file);
+			    session->vs_file);
 
-			if ((ret = vrrp_state_set(impl, VRRP_INITIAL)) != 0) {
+			if ((ret = vrrp_state_set(session,
+			    VRRP_INITIAL)) != 0) {
 				vrrp_log(LOG_ERR, "unable to set initial state"
-				    " on %s", impl->vi_file);
+				    " on %s", session->vs_file);
 				return (ret);
 			}
 
 			return (0);
 		}
 
-		impl->vi_timer_adv = vrrp_time_add(impl->vi_adv_interval);
+		session->vs_timer_adv = vrrp_time_add(session->vs_adv_interval);
 	}
 
 	if (vpkt != NULL && (vpkt->vpkt_type_vers & 0xf) == VRRP_PKT_ADVERT) {
 		if (vpkt->vpkt_priority == VRRP_PRIO_ZERO) {
-			if ((ret = vrrp_adv_send(impl,
-			    impl->vi_priority)) != 0) {
+			if ((ret = vrrp_adv_send(session,
+			    session->vs_priority)) != 0) {
 				vrrp_log(LOG_INFO, "failed to send advert on "
 				    "%s (recvd prio zero), moving from master "
-				    "to initial state", impl->vi_file);
+				    "to initial state", session->vs_file);
 
-				if ((ret = vrrp_state_set(impl,
+				if ((ret = vrrp_state_set(session,
 				    VRRP_INITIAL)) != 0) {
 					vrrp_log(LOG_ERR, "unable to set "
 					    "initial state on %s",
-					    impl->vi_file);
+					    session->vs_file);
 					return (ret);
 				}
 
 				return (0);
 			}
 
-			impl->vi_timer_adv =
-			    vrrp_time_add(impl->vi_adv_interval);
+			session->vs_timer_adv =
+			    vrrp_time_add(session->vs_adv_interval);
 
-		} else if (vpkt->vpkt_priority > impl->vi_priority ||
-		    (vpkt->vpkt_priority == impl->vi_priority &&
-		    src.sin_addr.s_addr > impl->vi_primary.intf_addr.s_addr)) {
+		} else if (vpkt->vpkt_priority > session->vs_priority ||
+		    (vpkt->vpkt_priority == session->vs_priority &&
+		    src.sin_addr.s_addr >
+		    session->vs_primary.intf_addr.s_addr)) {
 
-			impl->vi_master_adv_interval =
+			session->vs_master_adv_interval =
 			    vpkt->vpkt_adv_interval * CENTISEC;
 
-			impl->vi_skew_time = (((256 - impl->vi_priority) *
-			    impl->vi_master_adv_interval) / 256);
+			session->vs_skew_time = (((256 - session->vs_priority) *
+			    session->vs_master_adv_interval) / 256);
 
-			impl->vi_master_down_interval =
-			    ((3 * impl->vi_adv_interval) + impl->vi_skew_time);
+			session->vs_master_down_interval =
+			    ((3 * session->vs_adv_interval) +
+			    session->vs_skew_time);
 
-			impl->vi_timer_mdown =
-			    vrrp_time_add(impl->vi_master_down_interval);
-			impl->vi_timer_adv = (vrrp_time_t) {0, 0};
+			session->vs_timer_mdown =
+			    vrrp_time_add(session->vs_master_down_interval);
+			session->vs_timer_adv = (vrrp_time_t) {0, 0};
 
-			if ((ret = vrrp_state_set(impl, VRRP_SLAVE)) != 0) {
+			if ((ret = vrrp_state_set(session, VRRP_SLAVE)) != 0) {
 				vrrp_log(LOG_ERR, "failed to set slave state "
-				    "on %s", impl->vi_file);
+				    "on %s", session->vs_file);
 				return (ret);
 			}
 		} else {
@@ -1686,7 +1697,7 @@ vrrp_state_master(vrrp_impl_t *impl)
 void *
 vrrp_state_thread(void *arg)
 {
-	vrrp_impl_t	*impl = (vrrp_impl_t *)arg;
+	vrrp_session_t	*session = (vrrp_session_t *)arg;
 	int		ret = 0;
 
 	vrrp_rwlock_wrlock(&vrrp_list_rwlock);
@@ -1694,17 +1705,17 @@ vrrp_state_thread(void *arg)
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
 
 	for (;;) {
-		switch (impl->vi_state) {
+		switch (session->vs_state) {
 		case VRRP_INITIAL:
-			ret = vrrp_state_initial(impl);
+			ret = vrrp_state_initial(session);
 			break;
 
 		case VRRP_SLAVE:
-			ret = vrrp_state_slave(impl);
+			ret = vrrp_state_slave(session);
 			break;
 
 		case VRRP_MASTER:
-			ret = vrrp_state_master(impl);
+			ret = vrrp_state_master(session);
 			break;
 
 		case VRRP_SHUTDOWN:
@@ -1713,25 +1724,25 @@ vrrp_state_thread(void *arg)
 		}
 
 		if (ret != 0) {
-			vrrp_rwlock_rdlock(&impl->vi_rwlock);
+			vrrp_rwlock_rdlock(&session->vs_rwlock);
 
-			if (impl->vi_state != VRRP_SHUTDOWN) {
-				vrrp_rwlock_unlock(&impl->vi_rwlock);
-				(void) vrrp_state_set(impl, VRRP_SHUTDOWN);
+			if (session->vs_state != VRRP_SHUTDOWN) {
+				vrrp_rwlock_unlock(&session->vs_rwlock);
+				(void) vrrp_state_set(session, VRRP_SHUTDOWN);
 			} else {
-				vrrp_rwlock_unlock(&impl->vi_rwlock);
+				vrrp_rwlock_unlock(&session->vs_rwlock);
 			}
 
 			break;
 		}
 	}
 
-	vrrp_log(LOG_INFO, "shutting down %s", impl->vi_file);
+	vrrp_log(LOG_INFO, "shutting down %s", session->vs_file);
 
-	vrrp_rwlock_wrlock(&impl->vi_rwlock);
-	assert(impl->vi_state == VRRP_SHUTDOWN);
-	vrrp_impl_clear(impl);
-	vrrp_rwlock_unlock(&impl->vi_rwlock);
+	vrrp_rwlock_wrlock(&session->vs_rwlock);
+	assert(session->vs_state == VRRP_SHUTDOWN);
+	vrrp_session_clear(session);
+	vrrp_rwlock_unlock(&session->vs_rwlock);
 
 	vrrp_rwlock_wrlock(&vrrp_list_rwlock);
 	vrrp_inuse_cnt--;
@@ -1911,8 +1922,8 @@ vrrp_intf_setup_prim(intf_t *prim)
 }
 
 /*
- * Read the config files in VRRP_CONF_DIR verifying and allocating impl's
- * from the vrrp_impl_array table. Returns the number of allocated and/or
+ * Read the config files in VRRP_CONF_DIR verifying and allocating session's
+ * from the vrrp_session_array table. Returns the number of allocated and/or
  * deleted sessions through the respective arguments.
  */
 int
@@ -1924,7 +1935,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 	char			buf[64], *field, *val, *end, *sep = " \t\n";
 	char			fname[MAX_FNAME_LEN], *slash;
 	char			*rpt = "repeated entry %s on %s";
-	vrrp_impl_t		cfg, *impl;
+	vrrp_session_t		cfg, *session;
 	intf_t			*prim, *vip;
 	boolean_t		err;
 	uint64_t		tmp;
@@ -1940,12 +1951,12 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 	vrrp_rwlock_wrlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
+		session = &vrrp_session_array[ii];
 
-		if (impl->vi_impl_state != IMPL_FREE) {
-			assert(impl->vi_file[0] != '\0');
-			if (access(impl->vi_file, F_OK) != 0) {
-				impl->vi_impl_state = IMPL_EXIT;
+		if (session->vs_session_state != SS_FREE) {
+			assert(session->vs_file[0] != '\0');
+			if (access(session->vs_file, F_OK) != 0) {
+				session->vs_session_state = SS_EXIT;
 				deleted++;
 			}
 		}
@@ -1990,14 +2001,14 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 			continue;
 		}
 
-		vrrp_impl_clear(&cfg);
-		prim = &cfg.vi_primary;
-		vip = &cfg.vi_vip;
+		vrrp_session_clear(&cfg);
+		prim = &cfg.vs_primary;
+		vip = &cfg.vs_vip;
 
 		err = B_FALSE;
 		tmp = 0;
 
-		(void) strlcpy(cfg.vi_file, fname, sizeof (cfg.vi_file));
+		(void) strlcpy(cfg.vs_file, fname, sizeof (cfg.vs_file));
 
 		while (fgets(buf, sizeof (buf), fp) != NULL) {
 			if (buf[0] == '\0' || buf[0] == '#') {
@@ -2082,7 +2093,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				vip->intf_netmask.s_addr = htonl(nmask);
 
 			} else if (strcmp(field, "vrid") == 0) {
-				if (cfg.vi_vrid != 0) {
+				if (cfg.vs_vrid != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
 					err = B_TRUE;
 					break;
@@ -2099,11 +2110,11 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 					err = B_TRUE;
 					break;
 				} else {
-					cfg.vi_vrid = (vrid_t)tmp;
+					cfg.vs_vrid = (vrid_t)tmp;
 				}
 
 			} else if (strcmp(field, "priority") == 0) {
-				if (cfg.vi_priority != 0) {
+				if (cfg.vs_priority != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
 					err = B_TRUE;
 					break;
@@ -2123,11 +2134,11 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 					break;
 
 				} else {
-					cfg.vi_priority = (prio_t)tmp;
+					cfg.vs_priority = (prio_t)tmp;
 				}
 
 			} else if (strcmp(field, "advert_int") == 0) {
-				if (cfg.vi_adv_interval != 0) {
+				if (cfg.vs_adv_interval != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
 					err = B_TRUE;
 					break;
@@ -2159,23 +2170,23 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				 * milliseconds and we use nanoseconds
 				 * internally.
 				 */
-				cfg.vi_adv_interval = tmp;
-				cfg.vi_master_down_interval =
-				    cfg.vi_adv_interval;
-				cfg.vi_master_adv_interval =
-				    cfg.vi_adv_interval;
-				cfg.vi_skew_time = (((256 - cfg.vi_priority) *
-				    cfg.vi_master_adv_interval) / 256);
+				cfg.vs_adv_interval = tmp;
+				cfg.vs_master_down_interval =
+				    cfg.vs_adv_interval;
+				cfg.vs_master_adv_interval =
+				    cfg.vs_adv_interval;
+				cfg.vs_skew_time = (((256 - cfg.vs_priority) *
+				    cfg.vs_master_adv_interval) / 256);
 
 			} else if (strcmp(field, "version") == 0) {
-				if (cfg.vi_version != 0) {
+				if (cfg.vs_version != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
 					err = B_TRUE;
 					break;
 				}
 
 				if (strcmp(val, "3") == 0) {
-					cfg.vi_version = VRRP_VERSION_3;
+					cfg.vs_version = VRRP_VERSION_3;
 				} else {
 					vrrp_log(LOG_ERR,
 					    "invalid version %s on %s",
@@ -2185,16 +2196,16 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				}
 
 			} else if (strcmp(field, "allow_preemption") == 0) {
-				if (cfg.vi_allow_preemption != 0) {
+				if (cfg.vs_allow_preemption != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
 					err = B_TRUE;
 					break;
 				}
 
 				if (strcmp(val, "yes") == 0) {
-					cfg.vi_allow_preemption = B_TRUE;
+					cfg.vs_allow_preemption = B_TRUE;
 				} else if (strcmp(val, "no") == 0) {
-					cfg.vi_allow_preemption = B_FALSE;
+					cfg.vs_allow_preemption = B_FALSE;
 				} else {
 					vrrp_log(LOG_ERR,
 					    "invalid value '%s' on %s",
@@ -2220,76 +2231,76 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 		 * Check that the required fields were parsed.
 		 */
 		if (prim->intf_name[0] == '\0' || vip->intf_name[0] == '\0' ||
-		    vip->intf_addr_str[0] == '\0' || cfg.vi_vrid == 0 ||
-		    cfg.vi_priority == 0 || cfg.vi_adv_interval == 0) {
+		    vip->intf_addr_str[0] == '\0' || cfg.vs_vrid == 0 ||
+		    cfg.vs_priority == 0 || cfg.vs_adv_interval == 0) {
 			vrrp_log(LOG_ERR, "incomplete config on %s",
-			    cfg.vi_file);
+			    cfg.vs_file);
 			break;
 		}
 
 		/*
 		 * See if we've already loaded this config before.
 		 */
-		impl = NULL;
+		session = NULL;
 
-		ret = vrrp_find_and_lock(cfg.vi_file, prim->intf_name,
-		    vip->intf_name, &impl);
+		ret = vrrp_find_and_lock(cfg.vs_file, prim->intf_name,
+		    vip->intf_name, &session);
 
 		switch (ret) {
-		case IMPL_FIND_LOCKED:
+		case SF_LOCKED:
 			/*
-			 * Check if the impl we found hasn't changed, has
+			 * Check if the session we found hasn't changed, has
 			 * changed and can be updated or has changed and needs
 			 * to be replaced.
 			 */
-			switch (vrrp_impl_cmp(impl, &cfg)) {
-			case IMPL_CMP_SAME:
+			switch (vrrp_session_cmp(session, &cfg)) {
+			case SC_SAME:
 				vrrp_log(LOG_INFO, "config %s hasn't changed",
-				    cfg.vi_file);
+				    cfg.vs_file);
 				break;
 
-			case IMPL_CMP_VRRP:
+			case SC_VRRP:
 				vrrp_log(LOG_INFO, "updating VRRP config on %s",
-				    cfg.vi_file);
-				impl->vi_vrid = cfg.vi_vrid;
-				impl->vi_priority = cfg.vi_priority;
-				impl->vi_allow_preemption =
-				    cfg.vi_allow_preemption;
+				    cfg.vs_file);
+				session->vs_vrid = cfg.vs_vrid;
+				session->vs_priority = cfg.vs_priority;
+				session->vs_allow_preemption =
+				    cfg.vs_allow_preemption;
 				break;
 
-			case IMPL_CMP_PRIM:
-			case IMPL_CMP_VIP:
-			case IMPL_CMP_VRID:
+			case SC_PRIM:
+			case SC_VIP:
+			case SC_VRID:
 				/*
 				 * Mark the existing config for exit and
 				 * continue to allocate a new one.
 				 */
 				vrrp_log(LOG_INFO, "replacing config on %s",
-				    cfg.vi_file);
-				cfg.vi_impl_state = IMPL_EXIT;
+				    cfg.vs_file);
+				cfg.vs_session_state = SS_EXIT;
 				break;
 			}
 
-			vrrp_rwlock_unlock(&impl->vi_rwlock);
+			vrrp_rwlock_unlock(&session->vs_rwlock);
 			continue;
 
-		case IMPL_FIND_INVAL:
-			vrrp_log(LOG_ERR, "invalid config %s", cfg.vi_file);
+		case SF_INVAL:
+			vrrp_log(LOG_ERR, "invalid config %s", cfg.vs_file);
 			continue;
 
-		case IMPL_FIND_NONE:
+		case SF_NONE:
 			/* continue to allocate a new config */
 			break;
 		}
 
-		if ((impl = vrrp_alloc()) == NULL) {
+		if ((session = vrrp_alloc()) == NULL) {
 			vrrp_log(LOG_INFO, "all available sessions are busy");
 			continue;
 		}
 
 		if (vrrp_intf_setup_common(vip) == 0) {
 			(void) snprintf(buf, sizeof (buf),
-			    VRRP_MAC_ADDRv4, cfg.vi_vrid);
+			    VRRP_MAC_ADDRv4, cfg.vs_vrid);
 
 			if (strncasecmp(vip->intf_mac_str, buf,
 			    sizeof (vip->intf_mac_str)) != 0) {
@@ -2307,26 +2318,26 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				 * Alright, new config is valid. Copy it to
 				 * the newly allocated one and start its thread.
 				 */
-				vrrp_impl_inuse(impl, &cfg);
+				vrrp_session_inuse(session, &cfg);
 			}
 		}
 
-		vrrp_rwlock_unlock(&impl->vi_rwlock);
+		vrrp_rwlock_unlock(&session->vs_rwlock);
 
 		/*
-		 * If all went well, the impl should be in use and we
+		 * If all went well, the session should be in use and we
 		 * can create its state thread.
 		 */
-		if (impl->vi_impl_state == IMPL_INUSE) {
-			if (pthread_create(&impl->vi_thread, NULL,
-			    vrrp_state_thread, (void *)impl) != 0) {
+		if (session->vs_session_state == SS_INUSE) {
+			if (pthread_create(&session->vs_thread, NULL,
+			    vrrp_state_thread, (void *)session) != 0) {
 				vrrp_log(LOG_INFO, "failed to create session "
-				    "for %s (%s)", impl->vi_file,
+				    "for %s (%s)", session->vs_file,
 				    strerror(errno));
 
 				vrrp_intf_teardown(vip);
 				vrrp_intf_teardown(prim);
-				vrrp_impl_clear(impl);
+				vrrp_session_clear(session);
 			} else {
 				alloced++;
 			}
@@ -2352,7 +2363,7 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 	struct sockaddr_un	addr = { 0 };
 	int			send_socket, ret = 0;
 	ctrl_msg_t		msg_type;
-	vrrp_impl_t		impl;
+	vrrp_session_t		session;
 
 	/*
 	 * First we send the command to the daemon..
@@ -2409,14 +2420,14 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 				break;
 			}
 
-			(void) memcpy((void *)&impl, (void *)ctrl_msg->vcm_buf,
-			    sizeof (impl));
+			(void) memcpy((void *)&session,
+			    (void *)ctrl_msg->vcm_buf, sizeof (session));
 
-			if (impl.vi_file[0] == '\0') {
+			if (session.vs_file[0] == '\0') {
 				break;
 			}
 
-			vrrp_show_impl(&impl);
+			vrrp_show_session(&session);
 		}
 
 		break;
@@ -2449,29 +2460,30 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 }
 
 /*
- * Send each configured vrrp_impl_t to the client using the given socket and
- * vrrp_ctrl_msg structure. We send one at a time to simplify things.
+ * Send each configured vrrp_session_t to the client using the given socket and
+ * vrrp_ctrl_msg structure. We send one at a time to ssessionify things.
  */
 int
-vrrp_send_impl(socket_t conn_socket, vrrp_ctrl_msg_t *ctrl_msg)
+vrrp_send_session(socket_t conn_socket, vrrp_ctrl_msg_t *ctrl_msg)
 {
-	vrrp_impl_t	*impl;
+	vrrp_session_t	*session;
 	int		ii, ret = 0;
 
-	assert(sizeof (ctrl_msg->vcm_buf) > sizeof (*impl));
+	assert(sizeof (ctrl_msg->vcm_buf) > sizeof (*session));
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
-		memset(ctrl_msg, 0, sizeof (*ctrl_msg));
+		session = &vrrp_session_array[ii];
+		(void) memset(ctrl_msg, 0, sizeof (*ctrl_msg));
 
-		vrrp_rwlock_rdlock(&impl->vi_rwlock);
+		vrrp_rwlock_rdlock(&session->vs_rwlock);
 
-		if (impl->vi_impl_state != IMPL_FREE) {
-			memcpy(ctrl_msg->vcm_buf, impl, sizeof (*impl));
-			vrrp_rwlock_unlock(&impl->vi_rwlock);
+		if (session->vs_session_state != SS_FREE) {
+			(void) memcpy(ctrl_msg->vcm_buf, session,
+			    sizeof (*session));
+			vrrp_rwlock_unlock(&session->vs_rwlock);
 		} else {
-			vrrp_rwlock_unlock(&impl->vi_rwlock);
+			vrrp_rwlock_unlock(&session->vs_rwlock);
 			continue;
 		}
 
@@ -2490,7 +2502,7 @@ vrrp_send_impl(socket_t conn_socket, vrrp_ctrl_msg_t *ctrl_msg)
 	 * Zero the ctrl_msg on our way out so the client interprets a blank
 	 * structure as the end of the transimission.
 	 */
-	memset(ctrl_msg, 0, sizeof (*ctrl_msg));
+	(void) memset(ctrl_msg, 0, sizeof (*ctrl_msg));
 
 	return (ret);
 }
@@ -2501,22 +2513,22 @@ vrrp_send_impl(socket_t conn_socket, vrrp_ctrl_msg_t *ctrl_msg)
 void
 vrrp_summary(vrrp_ctrl_msg_t *ctrl_msg)
 {
-	vrrp_impl_t	*impl;
+	vrrp_session_t	*session;
 	int		ii, ninitial = 0, nslave = 0, nmaster = 0;
 
-	assert(sizeof (ctrl_msg->vcm_buf) > sizeof (*impl));
+	assert(sizeof (ctrl_msg->vcm_buf) > sizeof (*session));
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
-		vrrp_rwlock_rdlock(&impl->vi_rwlock);
+		session = &vrrp_session_array[ii];
+		vrrp_rwlock_rdlock(&session->vs_rwlock);
 
-		if (impl->vi_impl_state == IMPL_FREE) {
-			vrrp_rwlock_unlock(&impl->vi_rwlock);
+		if (session->vs_session_state == SS_FREE) {
+			vrrp_rwlock_unlock(&session->vs_rwlock);
 			continue;
 		}
 
-		switch (impl->vi_state) {
+		switch (session->vs_state) {
 		case VRRP_INITIAL:
 			ninitial++;
 			break;
@@ -2530,7 +2542,7 @@ vrrp_summary(vrrp_ctrl_msg_t *ctrl_msg)
 			break;
 		}
 
-		vrrp_rwlock_unlock(&impl->vi_rwlock);
+		vrrp_rwlock_unlock(&session->vs_rwlock);
 	}
 
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
@@ -2580,7 +2592,7 @@ vrrp_ctrl_handler(void *arg)
 			break;
 
 		case CTRL_SHOW:
-			if (vrrp_send_impl(conn_socket, &ctrl_msg) != 0) {
+			if (vrrp_send_session(conn_socket, &ctrl_msg) != 0) {
 				(void) strlcpy(ctrl_msg.vcm_buf,
 				    "error showing configuration",
 				    sizeof (ctrl_msg.vcm_buf));
@@ -2744,7 +2756,7 @@ vrrp_init(void)
 {
 	pthread_mutexattr_t	mattr;
 	pthread_rwlockattr_t	rwattr;
-	vrrp_impl_t		*impl;
+	vrrp_session_t		*session;
 	struct sigaction	sig = {{ 0 }};
 	int			ii, ret, alloced, deleted;
 
@@ -2787,15 +2799,15 @@ vrrp_init(void)
 	vrrp_rwlock_wrlock(&vrrp_list_rwlock);
 
 	/*
-	 * Initialize all the impl mutexes and mark them as free. These locks
+	 * Initialize all the session mutexes and mark them as free. These locks
 	 * will only be destroyed when quiting.
 	 */
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
-		impl = &vrrp_impl_array[ii];
+		session = &vrrp_session_array[ii];
 
-		vrrp_impl_clear(impl);
+		vrrp_session_clear(session);
 
-		if (pthread_rwlock_init(&impl->vi_rwlock, &rwattr) != 0) {
+		if (pthread_rwlock_init(&session->vs_rwlock, &rwattr) != 0) {
 			vrrp_quit("failed to init rwlock %d (%s)", ii,
 			    strerror(errno));
 		}
