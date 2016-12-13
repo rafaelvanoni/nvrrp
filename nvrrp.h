@@ -181,34 +181,34 @@ typedef enum {
 } vrrp_state_t;
 
 /*
- * Indicates whether a impl structure is free, being used or should be
+ * Indicates whether a session structure is free, being used or should be
  * deleted (and its configuration undone).
  */
 typedef enum {
-	IMPL_FREE		= 1,	/* or unused, available */
-	IMPL_INUSE		= 2,	/* in use and loaded */
-	IMPL_EXIT		= 3 	/* session is being terminated */
-} impl_state_t;
+	SS_FREE			= 1,	/* or unused, available */
+	SS_INUSE		= 2,	/* in use and loaded */
+	SS_EXIT			= 3 	/* session is being terminated */
+} session_state_t;
 
 /*
- * Indicates any differences between two impl structures (used when reloading).
+ * Indicates any differences between two session structs (used when reloading).
  */
 typedef enum {
-	IMPL_CMP_PRIM		= 1,	/* different vi_primary interface */
-	IMPL_CMP_VIP		= 2,	/* different vi_vip interface */
-	IMPL_CMP_VRID		= 3,	/* different vrid */
-	IMPL_CMP_VRRP		= 4,	/* different VRRP setting(s) */
-	IMPL_CMP_SAME		= 5	/* no differences */
-} impl_cmp_t;
+	SC_PRIM			= 1,	/* different vs_primary interface */
+	SC_VIP			= 2,	/* different vs_vip interface */
+	SC_VRID			= 3,	/* different vrid */
+	SC_VRRP			= 4,	/* different VRRP setting(s) */
+	SC_SAME			= 5	/* no differences */
+} session_cmp_t;
 
 /*
  * Return values for vrrp_find_and_lock().
  */
 typedef enum {
-	IMPL_FIND_NONE		= 1,	/* didn't find a matching impl */
-	IMPL_FIND_INVAL		= 2,	/* primary or vip already in use */
-	IMPL_FIND_LOCKED	= 3	/* found and returned a locked impl */
-} impl_find_t;
+	SF_NONE			= 1,	/* didn't find a matching session */
+	SF_INVAL		= 2,	/* primary or vip already in use */
+	SF_LOCKED		= 3	/* found + returned a locked session */
+} session_find_t;
 
 /*
  * Interface specification and implementation fields.
@@ -230,48 +230,48 @@ typedef struct {
  * its implementation.
  */
 typedef struct {
-	pthread_rwlock_t	vi_rwlock;
-	pthread_t		vi_thread;
-	impl_state_t		vi_impl_state;
-	char			vi_file[MAX_FNAME_LEN];
-	intf_t			vi_primary;
-	intf_t			vi_vip;
-	vrrp_version_t		vi_version;
-	vrrp_state_t		vi_state;
-	vrid_t			vi_vrid;
-	prio_t			vi_priority;
-	int64_t			vi_adv_interval;
-	boolean_t		vi_allow_preemption;
+	pthread_rwlock_t	vs_rwlock;
+	pthread_t		vs_thread;
+	session_state_t		vs_session_state;
+	char			vs_file[MAX_FNAME_LEN];
+	intf_t			vs_primary;
+	intf_t			vs_vip;
+	vrrp_version_t		vs_version;
+	vrrp_state_t		vs_state;
+	vrid_t			vs_vrid;
+	prio_t			vs_priority;
+	int64_t			vs_adv_interval;
+	boolean_t		vs_allow_preemption;
 	/*
 	 * Current master's advertisement interval in nanoseconds. Used in
-	 * slave mode to calculate vi_master_down_interval and vi_skew_time.
-	 * Initialized to vi_adv_interval.
+	 * slave mode to calculate vs_master_down_interval and vs_skew_time.
+	 * Initialized to vs_adv_interval.
 	 */
-	int64_t			vi_master_adv_interval;
+	int64_t			vs_master_adv_interval;
 	/*
 	 * Interval in nanoseconds for backup to declare master as down.
-	 *   (( 3 * vi_master_adv_interval ) + vi_skew_time )
+	 *   (( 3 * vs_master_adv_interval ) + vs_skew_time )
 	 */
-	int64_t			vi_master_down_interval;
+	int64_t			vs_master_down_interval;
 	/*
-	 * Time to skew vi_master_down_interval in nanoseconds.
-	 *   ((( 256 - vis_priority ) * vi_master_adv_interval ) / 256 )
+	 * Time to skew vs_master_down_interval in nanoseconds.
+	 *   ((( 256 - vs_priority ) * vs_master_adv_interval ) / 256 )
 	 */
-	int64_t			vi_skew_time;
+	int64_t			vs_skew_time;
 
-	vrrp_time_t		vi_timer_adv;
-	vrrp_time_t		vi_timer_mdown;
+	vrrp_time_t		vs_timer_adv;
+	vrrp_time_t		vs_timer_mdown;
 
-	uint16_t		vi_iphdr_id;
+	uint16_t		vs_iphdr_id;
 
-	uint64_t		vi_counter_s2m;
-	uint64_t		vi_counter_m2s;
-	uint64_t		vi_counter_s2i;
-	uint64_t		vi_counter_m2i;
-	uint64_t		vi_counter_recvd;
-	uint64_t		vi_counter_sent;
-	uint64_t		vi_counter_err;
-} vrrp_impl_t;
+	uint64_t		vs_counter_s2m;
+	uint64_t		vs_counter_m2s;
+	uint64_t		vs_counter_s2i;
+	uint64_t		vs_counter_m2i;
+	uint64_t		vs_counter_recvd;
+	uint64_t		vs_counter_sent;
+	uint64_t		vs_counter_err;
+} vrrp_session_t;
 
 /*
  * Commands that can be issued to the daemon.
