@@ -1222,9 +1222,9 @@ vrrp_adv_send(vrrp_session_t *session, prio_t prio)
 }
 
 vrrp_pkt_t *
-vrrp_adv_recv(vrrp_session_t *session, vrrp_time_t to, struct sockaddr_in *src)
+vrrp_adv_recv(vrrp_session_t *session, vrrp_time_t to, struct sockaddr_in *src,
+    char *buf, int buf_len)
 {
-	char			buf[IP_BUF_LEN] = { 0 };
 	vrrp_time_t		ts;
 	struct timeval		tv, tv_ret;
 	struct iovec		iovec;
@@ -1236,10 +1236,10 @@ vrrp_adv_recv(vrrp_session_t *session, vrrp_time_t to, struct sockaddr_in *src)
 	int			acc;
 	struct in_addr		*ipa;
 
-	assert((sizeof (*iphdr) + VRRP_PKT_LEN) < sizeof (buf));
+	assert((sizeof (*iphdr) + VRRP_PKT_LEN) < buf_len);
 
 	iovec.iov_base = buf;
-	iovec.iov_len = sizeof (buf);
+	iovec.iov_len = buf_len;
 
 	msghdr.msg_name = src;
 	msghdr.msg_namelen = sizeof (src);
@@ -1489,6 +1489,7 @@ vrrp_state_initial(vrrp_session_t *session)
 int
 vrrp_state_slave(vrrp_session_t *session)
 {
+	char			buf[IP_BUF_LEN] = { 0 };
 	vrrp_pkt_t		*vpkt;
 	struct sockaddr_in	src;
 	int			ret;
@@ -1503,7 +1504,8 @@ vrrp_state_slave(vrrp_session_t *session)
 		return (0);
 	}
 
-	vpkt = vrrp_adv_recv(session, session->vs_timer_mdown, &src);
+	vpkt = vrrp_adv_recv(session, session->vs_timer_mdown, &src, buf,
+	    sizeof (buf));
 
 	/*
 	 * Switch to master if the master down timer has expired, but first
@@ -1587,6 +1589,7 @@ vrrp_state_slave(vrrp_session_t *session)
 int
 vrrp_state_master(vrrp_session_t *session)
 {
+	char			buf[IP_BUF_LEN] = { 0 };
 	vrrp_pkt_t		*vpkt;
 	struct sockaddr_in	src;
 	int			ret;
@@ -1605,7 +1608,8 @@ vrrp_state_master(vrrp_session_t *session)
 		return (0);
 	}
 
-	vpkt = vrrp_adv_recv(session, session->vs_timer_adv, &src);
+	vpkt = vrrp_adv_recv(session, session->vs_timer_adv, &src, buf,
+	    sizeof (buf));
 
 	if (vrrp_time_elapsed(session->vs_timer_adv)) {
 		if (!vrrp_intf_is_up(&session->vs_primary)) {
