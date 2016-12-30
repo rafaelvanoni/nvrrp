@@ -2175,12 +2175,13 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				 * internally.
 				 */
 				cfg.vs_adv_interval = tmp;
-				cfg.vs_master_down_interval =
-				    cfg.vs_adv_interval;
 				cfg.vs_master_adv_interval =
 				    cfg.vs_adv_interval;
 				cfg.vs_skew_time = (((256 - cfg.vs_priority) *
 				    cfg.vs_master_adv_interval) / 256);
+				cfg.vs_master_down_interval =
+				    ((3 * cfg.vs_master_adv_interval) +
+				    cfg.vs_skew_time);
 
 			} else if (strcmp(field, "version") == 0) {
 				if (cfg.vs_version != 0) {
