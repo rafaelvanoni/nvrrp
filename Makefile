@@ -19,7 +19,7 @@
 
 TARGET	= nvrrp
 CWARN	= -Wall -Werror -Wformat -Wformat-security -Wunused -Wpedantic
-CFLAGS	= -g -std=c99 -m64 -D_FORTIFY_SOURCE=2 -fstack-protector -D_GNU_SOURCE
+CFLAGS	= -g -std=c18 -m64 -D_FORTIFY_SOURCE=2 -fstack-protector -D_GNU_SOURCE
 DEPS	= -MD -MF $(TARGET).d
 LIBS	= -lbsd -lpthread -lrt
 OPT	= -O3
