@@ -1,7 +1,8 @@
 /*
- * This file is part of the nvrrp project (https://launchpad.net/nvrrp/)
+ * This file is part of the nvrrp project (http://github.com/rafaelvanoni/nvrrp)
  *
  * Copyright (C) 2016   Pluribus Networks
+ * Copyright (C) 2021	Rafael Vanoni
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -46,6 +47,7 @@
 #include <net/ethernet.h>
 #include <bsd/string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 #define	VRRP_CONF_DIR		"/etc/nvrrp"
 #define	VRRP_LOG_FILE		"/var/log/nvrrp.log"
@@ -59,7 +61,7 @@
 #define	MAC_ADDR_LEN		(6)
 #define	MAC_STRING_LEN		(18)
 #define	MAX_NUM_VRRP_INTF	(256)
-#define	MAX_FNAME_LEN		(64)
+#define	MAX_FNAME_LEN		(512)
 #define	IP_BUF_LEN		(64)
 
 #define	VRRP_LOG_MAXSZ		(1 << 23)	/* 8Mb in bytes */
@@ -79,17 +81,6 @@ typedef u_short			ushort_t;
 /* CSTYLED */
 typedef u_char			uchar_t;
 
-typedef enum {
-	B_FALSE			= 0,
-	B_TRUE			= 1
-} boolean_t;
-
-typedef unsigned int		intf_index_t;
-typedef uint8_t			vrid_t;		/* [1..255] */
-typedef uint8_t			prio_t;		/* [1..254], 0 and 255 reserv */
-typedef	uint8_t			adv_int_t;
-typedef int			socket_t;
-
 #define	VRRP_MCAST_ADDRv4	"224.0.0.18"
 #define	VRRP_MCAST_HEXv4	(0xe0000012)
 #define	VRRP_MAC_ADDRv4		"00:00:5E:00:01:%02x"
@@ -103,7 +94,7 @@ typedef int			socket_t;
  */
 typedef enum {
 	VRRP_PKT_ADVERT		= 1
-} vrrp_pkt_type_t;
+} vrrp_pkt_type;
 
 /*
  * Priority value for the VRRP router that owns the IP addr(s) associated
@@ -126,11 +117,11 @@ typedef enum {
  * Authentication types per RFC 3768. We don't currently support any, or only
  * support type 0.
  */
-typedef enum {
+enum vrrp_auth_type {
 	VRRP_AUTH_TYPE0		= 0,
 	VRRP_AUTH_TYPE1		= 1,
 	VRRP_AUTH_TYPE2		= 2
-} vrrp_auth_type_t;
+};
 
 /*
  * Default advertisement interval in nanosseconds.
@@ -139,46 +130,44 @@ typedef enum {
 #define	VRRP_ADV_INT_MIN	(NANOSEC)
 #define	VRRP_ADV_INT_MAX	(NANOSEC * 10)
 
-typedef struct {
+struct vrrp_pkt {
 	uint8_t			vpkt_type_vers;
-	vrid_t			vpkt_vrid;
-	prio_t			vpkt_priority;
+	uint8_t			vpkt_vrid;
+	uint8_t			vpkt_priority;
 	uint8_t			vpkt_addr_count;
 	uint8_t			vpkt_auth_type;
-	adv_int_t		vpkt_adv_interval;
+	uint8_t			vpkt_adv_interval;
 	uint16_t		vpkt_csum;
-} vrrp_pkt_t;
+};
 
 /*
  * For simplicity, this macro indicates the size of the VRRP packet structure
  * with a single virtual address and no authentication data.
  */
-#define	VRRP_PKT_LEN		(sizeof (vrrp_pkt_t) + sizeof (struct in_addr))
+#define	VRRP_PKT_LEN	(sizeof (struct vrrp_pkt) + sizeof (struct in_addr))
 
 /*
  * Pseudo headers for IPv4 and IPv6 used in checksum calculations.
  */
-typedef struct {
+struct vrrp_pseudo_v4hdr {
 	uint32_t		vps4_src;
 	uint32_t		vps4_dst;
 	uint8_t			vps4_zero;	/* always zero */
 	uint8_t			vps4_protocol;	/* VRRP_PROTOCOL */
 	uint16_t		vps4_len;	/* VRRP payload len */
-} vrrp_pseudo_v4hdr_t;
-
-typedef struct timespec		vrrp_time_t;
+};
 
 typedef enum {
 	VRRP_VERSION_2		= 2,
 	VRRP_VERSION_3		= 3
-} vrrp_version_t;
+} vrrp_version;
 
 typedef enum {
 	VRRP_INITIAL		= 1,	/* wait for startup event */
 	VRRP_SLAVE		= 2,	/* monitor state of master router */
 	VRRP_MASTER		= 3,	/* function as the forwarding router */
 	VRRP_SHUTDOWN		= 4	/* session is exiting.. */
-} vrrp_state_t;
+} vrrp_state;
 
 /*
  * Indicates whether a session structure is free, being used or should be
@@ -188,7 +177,7 @@ typedef enum {
 	SS_FREE			= 1,	/* or unused, available */
 	SS_INUSE		= 2,	/* in use and loaded */
 	SS_EXIT			= 3 	/* session is being terminated */
-} session_state_t;
+} session_state;
 
 /*
  * Indicates any differences between two session structs (used when reloading).
@@ -199,7 +188,7 @@ typedef enum {
 	SC_VRID			= 3,	/* different vrid */
 	SC_VRRP			= 4,	/* different VRRP setting(s) */
 	SC_SAME			= 5	/* no differences */
-} session_cmp_t;
+} session_cmp;
 
 /*
  * Return values for vrrp_find_and_lock().
@@ -208,40 +197,41 @@ typedef enum {
 	SF_NONE			= 1,	/* didn't find a matching session */
 	SF_INVAL		= 2,	/* primary or vip already in use */
 	SF_LOCKED		= 3	/* found + returned a locked session */
-} session_find_t;
+} session_find;
 
 /*
  * Interface specification and implementation fields.
  */
-typedef struct {
+struct intf {
 	char			intf_name[IFNAME_LEN];
 	char			intf_addr_str[IP_STRING_LEN];
 	struct in_addr		intf_addr;
 	struct in_addr		intf_netmask;
 	char			intf_mac_addr[MAC_ADDR_LEN];
 	char			intf_mac_str[MAC_STRING_LEN];
-	intf_index_t		intf_index;
-	socket_t		intf_mgmt;
-	socket_t		intf_mcast;
-} intf_t;
+	unsigned int		intf_index;
+	int			intf_mgmt;
+	int			intf_mcast;
+};
 
 /*
  * Internal representation of a VRRP interface with all the data required for
  * its implementation.
  */
-typedef struct {
+struct vrrp_session {
 	pthread_rwlock_t	vs_rwlock;
 	pthread_t		vs_thread;
-	session_state_t		vs_session_state;
+	session_state		vs_session_state;
 	char			vs_file[MAX_FNAME_LEN];
-	intf_t			vs_primary;
-	intf_t			vs_vip;
-	vrrp_version_t		vs_version;
-	vrrp_state_t		vs_state;
-	vrid_t			vs_vrid;
-	prio_t			vs_priority;
+	struct intf		vs_primary;
+	struct intf		vs_vip;
+	vrrp_version		vs_version;
+	vrrp_state		vs_state;
+	uint8_t			vs_vrid;
+	uint8_t			vs_priority;
 	int64_t			vs_adv_interval;
-	boolean_t		vs_allow_preemption;
+	bool			vs_allow_preemption;
+
 	/*
 	 * Current master's advertisement interval in nanoseconds. Used in
 	 * slave mode to calculate vs_master_down_interval and vs_skew_time.
@@ -259,8 +249,8 @@ typedef struct {
 	 */
 	int64_t			vs_skew_time;
 
-	vrrp_time_t		vs_timer_adv;
-	vrrp_time_t		vs_timer_mdown;
+	struct timespec		vs_timer_adv;
+	struct timespec		vs_timer_mdown;
 
 	uint16_t		vs_iphdr_id;
 
@@ -271,7 +261,7 @@ typedef struct {
 	uint64_t		vs_counter_recvd;
 	uint64_t		vs_counter_sent;
 	uint64_t		vs_counter_err;
-} vrrp_session_t;
+};
 
 /*
  * Commands that can be issued to the daemon.
@@ -285,21 +275,21 @@ typedef enum {
 	CTRL_CLEAR_COUNTERS	= 6,
 	CTRL_VERSION		= 7,
 	CTRL_LOG_LEVEL		= 8
-} ctrl_msg_t;
+} ctrl_msg;
 
 /*
  * Message structure for daemon/client communication.
  */
-typedef struct {
-	ctrl_msg_t		vcm_msg;
+struct vrrp_ctrl_msg {
+	ctrl_msg		vcm_msg;
 	char			vcm_buf[512];
-} vrrp_ctrl_msg_t;
+};
 
 /*
  * This structure is half declared in <linux/if_arp.h> but with the ethernet
  * portion ifdef'ed out. We need it for the gratuitous ARP packet.
  */
-typedef struct {
+struct vrrp_arphdr {
 	uint16_t		ar_hrd;		/* format of hardware addr */
 	uint16_t		ar_pro;		/* format of protocol addr */
 	uchar_t			ar_hln;		/* length of hardware addr */
@@ -309,7 +299,7 @@ typedef struct {
 	uchar_t			ar_sip[4];		/* sender IP addr */
 	uchar_t			ar_tha[ETH_ALEN];	/* target hw addr */
 	uchar_t			ar_tip[4];		/* target IP addr */
-} arphdr_t;
+};
 
 /*
  * Determines whether vrrp_setsockopt() should check a string or a binary value.
@@ -317,7 +307,7 @@ typedef struct {
 typedef enum {
 	VSC_STRING		= 1,
 	VSC_BIN			= 2
-} vrrp_setso_cmp_t;
+} vrrp_setso_cmp;
 
 /*
  * Log levels.
@@ -325,4 +315,4 @@ typedef enum {
 typedef enum {
 	LOG_INFO		= 1,
 	LOG_ERR			= 2
-} log_level_t;
+} log_level;
