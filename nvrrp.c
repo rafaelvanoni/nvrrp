@@ -1,7 +1,8 @@
 /*
- * This file is part of the nvrrp project (https://launchpad.net/nvrrp/)
+ * This file is part of the nvrrp project (http://github.com/rafaelvanoni/nvrrp)
  *
  * Copyright (C) 2016   Pluribus Networks
+ * Copyright (C) 2021	Rafael Vanoni
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,19 +34,19 @@ static char *vrrp_usage_str = "usage: nvrrp "
 	"   -h          show this help message";
 
 static pthread_rwlock_t		vrrp_list_rwlock;
-static vrrp_session_t		vrrp_session_array[MAX_NUM_VRRP_INTF];
-static boolean_t		vrrp_daemon = B_FALSE;
-static volatile boolean_t	vrrp_shutdown = B_FALSE;
-static socket_t			vrrp_unix_socket = 0;
-static socket_t			vrrp_garp_socket = 0;
+static struct vrrp_session	vrrp_session_array[MAX_NUM_VRRP_INTF];
+static bool			vrrp_daemon = false;
+static volatile bool		vrrp_shutdown = false;
+static int			vrrp_unix_socket = 0;
+static int			vrrp_garp_socket = 0;
 static uint16_t			vrrp_inuse_cnt = 0;
 
 static pthread_mutex_t		vrrp_log_mutex;
-static log_level_t		vrrp_log_level = LOG_INFO;
+static log_level		vrrp_log_level = LOG_INFO;
 static FILE			*vrrp_log_fp = NULL;
 
 void
-vrrp_log(log_level_t, const char *, ...)
+vrrp_log(log_level, const char *, ...)
     __attribute__((format(printf, 2, 3)));
 
 void
@@ -82,7 +83,7 @@ vrrp_rwlock_unlock(pthread_rwlock_t *lock)
  * When in daemon mode, log to the log file itself.
  */
 void
-vrrp_log(log_level_t level, const char *arg_fmt, ...)
+vrrp_log(log_level level, const char *arg_fmt, ...)
 {
 	va_list		args;
 	FILE		*stream;
@@ -159,7 +160,7 @@ vrrp_log(log_level_t level, const char *arg_fmt, ...)
 }
 
 char *
-vrrp_state_str(vrrp_state_t state)
+vrrp_state_str(vrrp_state state)
 {
 	switch (state) {
 	case VRRP_INITIAL:
@@ -175,7 +176,7 @@ vrrp_state_str(vrrp_state_t state)
 }
 
 void
-vrrp_intf_teardown(intf_t *intf)
+vrrp_intf_teardown(struct intf *intf)
 {
 	assert(intf != NULL);
 
@@ -195,12 +196,13 @@ vrrp_intf_teardown(intf_t *intf)
 void
 vrrp_quit(const char *fmt, ...)
 {
-	va_list		args;
-	char		buf[512];
-	vrrp_session_t	*session;
-	struct timespec	ts = { 0 };
-	int64_t		start = NANOSEC/2, inc = NANOSEC/10, max = NANOSEC;
-	int		iter = 30, ii, n, ret;
+	va_list			args;
+	char			buf[512];
+	struct vrrp_session	*session;
+	struct timespec		ts = { 0 };
+	int64_t			start = NANOSEC/2, inc = NANOSEC/10;
+	int64_t			max = NANOSEC;
+	int			iter = 30, ii, n, ret;
 
 	assert(max > start);
 	assert(start > inc);
@@ -211,7 +213,7 @@ vrrp_quit(const char *fmt, ...)
 	va_end(args);
 
 	if (vrrp_daemon) {
-		vrrp_shutdown = B_TRUE;
+		vrrp_shutdown = true;
 		ts.tv_nsec = start;
 
 		do {
@@ -291,10 +293,10 @@ vrrp_quit(const char *fmt, ...)
 /*
  * Return the sum of the current and given time.
  */
-static inline vrrp_time_t
+static inline struct timespec
 vrrp_time_add(int64_t val)
 {
-	vrrp_time_t	curr;
+	struct timespec	curr;
 	uint64_t	nsec;
 	int		ret;
 
@@ -317,10 +319,10 @@ vrrp_time_add(int64_t val)
  * Return the difference between the current and the given time, or zero if the
  * latter has expired.
  */
-static inline vrrp_time_t
-vrrp_time_diff(vrrp_time_t ts)
+static inline struct timespec
+vrrp_time_diff(struct timespec ts)
 {
-	vrrp_time_t	curr;
+	struct timespec	curr;
 	int		ret;
 
 	ret = clock_gettime(CLOCK_MONOTONIC_RAW, &curr);
@@ -328,7 +330,7 @@ vrrp_time_diff(vrrp_time_t ts)
 
 	if (curr.tv_sec > ts.tv_sec ||
 	    (curr.tv_sec == ts.tv_sec && curr.tv_nsec >= ts.tv_nsec)) {
-		return ((vrrp_time_t) {0, 0});
+		return ((struct timespec) {0, 0});
 	}
 
 	curr.tv_sec = ts.tv_sec - curr.tv_sec;
@@ -343,28 +345,28 @@ vrrp_time_diff(vrrp_time_t ts)
 	return (curr);
 }
 
-static inline boolean_t
-vrrp_time_elapsed(vrrp_time_t ts)
+static inline bool
+vrrp_time_elapsed(struct timespec ts)
 {
-	vrrp_time_t	curr;
+	struct timespec	curr;
 	int		ret;
 
 	if (ts.tv_sec == 0 && ts.tv_nsec == 0) {
-		return (B_FALSE);
+		return (false);
 	}
 
 	ret = clock_gettime(CLOCK_MONOTONIC_RAW, &curr);
 	assert(ret == 0);
 
 	if (curr.tv_sec > ts.tv_sec) {
-		return (B_TRUE);
+		return (true);
 	}
 
 	if (curr.tv_sec == ts.tv_sec && curr.tv_nsec >= ts.tv_nsec) {
-		return (B_TRUE);
+		return (true);
 	}
 
-	return (B_FALSE);
+	return (false);
 }
 
 /*
@@ -372,7 +374,7 @@ vrrp_time_elapsed(vrrp_time_t ts)
  * state to SS_INUSE but leaving the lock alone.
  */
 void
-vrrp_session_inuse(vrrp_session_t *dest, vrrp_session_t *src)
+vrrp_session_inuse(struct vrrp_session *dest, struct vrrp_session *src)
 {
 	assert(dest != NULL);
 	assert(src != NULL);
@@ -409,7 +411,7 @@ vrrp_session_inuse(vrrp_session_t *dest, vrrp_session_t *src)
  * mutex alone (it's already been initialized).
  */
 void
-vrrp_session_clear(vrrp_session_t *session)
+vrrp_session_clear(struct vrrp_session *session)
 {
 	assert(session != NULL);
 
@@ -427,12 +429,12 @@ vrrp_session_clear(vrrp_session_t *session)
 	session->vs_vrid = 0;
 	session->vs_priority = 0;
 	session->vs_adv_interval = 0;
-	session->vs_allow_preemption = B_TRUE;
+	session->vs_allow_preemption = true;
 	session->vs_master_adv_interval = 0;
 	session->vs_master_down_interval = 0;
 	session->vs_skew_time = 0;
-	session->vs_timer_adv = (vrrp_time_t) {0, 0};
-	session->vs_timer_mdown = (vrrp_time_t) {0, 0};
+	session->vs_timer_adv = (struct timespec) {0, 0};
+	session->vs_timer_mdown = (struct timespec) {0, 0};
 	session->vs_iphdr_id = 0;
 	session->vs_counter_s2m = 0;
 	session->vs_counter_m2s = 0;
@@ -449,10 +451,10 @@ vrrp_session_clear(vrrp_session_t *session)
  * VRRP configuration changed. Note that this is called before the
  * implementation specific fields of either interface are populated.
  */
-session_cmp_t
-vrrp_session_cmp(vrrp_session_t *a, vrrp_session_t *b)
+session_cmp
+vrrp_session_cmp(struct vrrp_session *a, struct vrrp_session *b)
 {
-	intf_t		*ap, *av, *bp, *bv;
+	struct intf	*ap, *av, *bp, *bv;
 
 	assert(a != NULL);
 	assert(b != NULL);
@@ -488,7 +490,7 @@ vrrp_session_cmp(vrrp_session_t *a, vrrp_session_t *b)
 }
 
 void
-vrrp_show_session(vrrp_session_t *session)
+vrrp_show_session(struct vrrp_session *session)
 {
 	char	prim_addr[IP_STRING_LEN], vip_addr[IP_STRING_LEN];
 	char	prim_nmask[IP_STRING_LEN], vip_nmask[IP_STRING_LEN];
@@ -594,7 +596,7 @@ vrrp_show_session(vrrp_session_t *session)
 }
 
 void
-vrrp_show_pkt(vrrp_pkt_t *vpkt, struct in_addr src_addr)
+vrrp_show_pkt(struct vrrp_pkt *vpkt, struct in_addr src_addr)
 {
 	int	pad = 18;
 
@@ -624,11 +626,11 @@ vrrp_show_pkt(vrrp_pkt_t *vpkt, struct in_addr src_addr)
 /*
  * Return the first empty intf_session with its rwlock held.
  */
-vrrp_session_t *
+struct vrrp_session *
 vrrp_alloc(void)
 {
-	vrrp_session_t	*session;
-	int		ii;
+	struct vrrp_session	*session;
+	int			ii;
 
 	vrrp_rwlock_wrlock(&vrrp_list_rwlock);
 
@@ -655,12 +657,12 @@ vrrp_alloc(void)
  * Return the current state of the given VRRP interface or zero (an invalid
  * state) if one isn't found.
  */
-vrrp_state_t
+vrrp_state
 vrrp_get_state(char *vip)
 {
-	vrrp_session_t	*session;
-	vrrp_state_t	state;
-	int		ii;
+	struct vrrp_session	*session;
+	vrrp_state		state;
+	int			ii;
 
 	assert(vip != NULL);
 
@@ -692,8 +694,8 @@ vrrp_get_state(char *vip)
 void
 vrrp_clear_counters(void)
 {
-	vrrp_session_t	*session;
-	int		ii;
+	struct vrrp_session	*session;
+	int			ii;
 
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
 
@@ -717,12 +719,12 @@ vrrp_clear_counters(void)
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
 }
 
-session_find_t
+session_find
 vrrp_find_and_lock(char *filename, char *primary, char *vip,
-    vrrp_session_t **ret_session)
+    struct vrrp_session **ret_session)
 {
-	vrrp_session_t	*session;
-	int		ii, ret;
+	struct vrrp_session	*session;
+	int			ii, ret;
 
 	assert(filename != NULL);
 	assert(primary != NULL);
@@ -851,7 +853,7 @@ in_csum(ushort_t *addr, int len, int csum, int *acc)
 
 int
 vrrp_setsockopt(int sock, int level, int opt, void *arg, void *chk,
-    socklen_t len, vrrp_setso_cmp_t cmp)
+    socklen_t len, vrrp_setso_cmp cmp)
 {
 	socklen_t	ret_len = len;
 	struct timeval	*tv;
@@ -909,8 +911,8 @@ vrrp_setsockopt(int sock, int level, int opt, void *arg, void *chk,
 	return (0);
 }
 
-boolean_t
-vrrp_intf_is_up(intf_t *intf)
+bool
+vrrp_intf_is_up(struct intf *intf)
 {
 	const short	fl = (IFF_UP | IFF_RUNNING);
 	struct ifreq	ifr = {{{ 0 }}};
@@ -920,14 +922,14 @@ vrrp_intf_is_up(intf_t *intf)
 	if (ioctl(intf->intf_mgmt, SIOCGIFFLAGS, &ifr) != 0) {
 		vrrp_log(LOG_ERR, "failed to get flags for %s (%s)",
 		    ifr.ifr_name, strerror(errno));
-		return (B_FALSE);
+		return (false);
 	}
 
 	return ((ifr.ifr_flags & fl) == fl);
 }
 
 int
-vrrp_intf_down(intf_t *intf)
+vrrp_intf_down(struct intf *intf)
 {
 	struct ifreq	ifr = {{{ 0 }}};
 
@@ -956,7 +958,7 @@ vrrp_intf_down(intf_t *intf)
  * already).
  */
 int
-vrrp_intf_up(intf_t *intf)
+vrrp_intf_up(struct intf *intf)
 {
 	struct ifreq		ifr = {{{ 0 }}};
 	int			flags = (IFF_UP | IFF_RUNNING);
@@ -1014,7 +1016,7 @@ vrrp_intf_up(intf_t *intf)
 }
 
 int
-vrrp_intf_setup_vip(intf_t *vip)
+vrrp_intf_setup_vip(struct intf *vip)
 {
 	struct ip_mreqn	mr = {{ 0 }}, mr_ret;
 	int		ret, so_val, so_ret;
@@ -1070,12 +1072,12 @@ vrrp_intf_setup_vip(intf_t *vip)
 }
 
 int
-vrrp_bcast_garp(vrrp_session_t *session)
+vrrp_bcast_garp(struct vrrp_session *session)
 {
-	char			buf[sizeof (arphdr_t) + ETH_HLEN] = { 0 };
+	char	buf[sizeof (struct vrrp_arphdr) + ETH_HLEN] = { 0 };
 	struct sockaddr_ll	dest = { 0 };
 	struct ether_header	*ehdr;
-	arphdr_t		*arphdr;
+	struct vrrp_arphdr	*arphdr;
 	char			*mac_addr = session->vs_vip.intf_mac_addr;
 	struct in_addr		vip_addr = session->vs_vip.intf_addr;
 
@@ -1096,7 +1098,7 @@ vrrp_bcast_garp(vrrp_session_t *session)
 	(void) memset(ehdr->ether_dhost, 0xff, ETH_ALEN);
 	(void) memcpy(ehdr->ether_shost, mac_addr, ETH_ALEN);
 
-	arphdr = (arphdr_t *)((char *)buf + sizeof (*ehdr));
+	arphdr = (struct vrrp_arphdr *)((char *)buf + sizeof (*ehdr));
 	arphdr->ar_hrd = htons(ARPHRD_ETHER);
 	arphdr->ar_pro = htons(ETHERTYPE_IP);
 	arphdr->ar_hln = ETH_ALEN;
@@ -1119,18 +1121,18 @@ vrrp_bcast_garp(vrrp_session_t *session)
 }
 
 int
-vrrp_adv_send(vrrp_session_t *session, prio_t prio)
+vrrp_adv_send(struct vrrp_session *session, uint8_t prio)
 {
-	char			buf[IP_BUF_LEN] = { 0 };
-	struct sockaddr_in	src = { 0 }, dest = { 0 };
-	struct iovec		iovec = { 0 };
-	struct msghdr		msghdr = { 0 };
-	struct iphdr		*iphdr;
-	vrrp_pkt_t		*vpkt;
-	vrrp_pseudo_v4hdr_t	ph = { 0 };
-	int			acc = 0;
-	struct in_addr		*ipa;
-	int			ret;
+	char				buf[IP_BUF_LEN] = { 0 };
+	struct sockaddr_in		src = { 0 }, dest = { 0 };
+	struct iovec			iovec = { 0 };
+	struct msghdr			msghdr = { 0 };
+	struct iphdr			*iphdr;
+	struct vrrp_pkt			*vpkt;
+	struct vrrp_pseudo_v4hdr	ph = { 0 };
+	int				acc = 0;
+	struct in_addr			*ipa;
+	int				ret;
 
 	assert((sizeof (*iphdr) + VRRP_PKT_LEN) < sizeof (buf));
 
@@ -1175,7 +1177,7 @@ vrrp_adv_send(vrrp_session_t *session, prio_t prio)
 	/*
 	 * ..followed by the VRRP packet
 	 */
-	vpkt = (vrrp_pkt_t *)((char *)iphdr + sizeof (*iphdr));
+	vpkt = (struct vrrp_pkt *)((char *)iphdr + sizeof (*iphdr));
 	vpkt->vpkt_type_vers = (VRRP_VERSION_3 << 4) | VRRP_PKT_ADVERT;
 	vpkt->vpkt_vrid = session->vs_vrid;
 	vpkt->vpkt_priority = prio;
@@ -1221,20 +1223,20 @@ vrrp_adv_send(vrrp_session_t *session, prio_t prio)
 	return (0);
 }
 
-vrrp_pkt_t *
-vrrp_adv_recv(vrrp_session_t *session, vrrp_time_t to, struct sockaddr_in *src,
-    char *buf, int buf_len)
+struct vrrp_pkt *
+vrrp_adv_recv(struct vrrp_session *session, struct timespec to,
+    struct sockaddr_in *src, char *buf, int buf_len)
 {
-	vrrp_time_t		ts;
-	struct timeval		tv, tv_ret;
-	struct iovec		iovec;
-	struct msghdr		msghdr;
-	struct iphdr		*iphdr;
-	ssize_t			len;
-	vrrp_pkt_t		*vpkt;
-	vrrp_pseudo_v4hdr_t	ph  = { 0 };
-	int			acc;
-	struct in_addr		*ipa;
+	struct timespec			ts;
+	struct timeval			tv, tv_ret;
+	struct iovec			iovec;
+	struct msghdr			msghdr;
+	struct iphdr			*iphdr;
+	ssize_t				len;
+	struct vrrp_pkt			*vpkt;
+	struct vrrp_pseudo_v4hdr	ph  = { 0 };
+	int				acc;
+	struct in_addr			*ipa;
 
 	assert((sizeof (*iphdr) + VRRP_PKT_LEN) < buf_len);
 
@@ -1282,7 +1284,7 @@ vrrp_adv_recv(vrrp_session_t *session, vrrp_time_t to, struct sockaddr_in *src,
 	 * Verify the packet.
 	 */
 	iphdr = (struct iphdr *)msghdr.msg_iov->iov_base;
-	vpkt = (vrrp_pkt_t *)((char *)iphdr + (iphdr->ihl << 2));
+	vpkt = (struct vrrp_pkt *)((char *)iphdr + (iphdr->ihl << 2));
 
 	if (len < (sizeof (struct iphdr) + VRRP_PKT_LEN)) {
 		vrrp_log(LOG_ERR, "incorrect pkt size on %s", session->vs_file);
@@ -1365,9 +1367,9 @@ vrrp_adv_recv(vrrp_session_t *session, vrrp_time_t to, struct sockaddr_in *src,
  * querying the state.
  */
 int
-vrrp_state_set(vrrp_session_t *session, vrrp_state_t new_state)
+vrrp_state_set(struct vrrp_session *session, vrrp_state new_state)
 {
-	vrrp_state_t	old_state;
+	vrrp_state	old_state;
 	int		ret = 0;
 
 	assert(new_state > 0);
@@ -1420,8 +1422,8 @@ vrrp_state_set(vrrp_session_t *session, vrrp_state_t new_state)
 		vrrp_intf_teardown(&session->vs_vip);
 		vrrp_intf_teardown(&session->vs_primary);
 
-		session->vs_timer_adv = (vrrp_time_t) {0, 0};
-		session->vs_timer_mdown = (vrrp_time_t) {0, 0};
+		session->vs_timer_adv = (struct timespec) {0, 0};
+		session->vs_timer_mdown = (struct timespec) {0, 0};
 		break;
 
 	case VRRP_MASTER:
@@ -1437,7 +1439,7 @@ vrrp_state_set(vrrp_session_t *session, vrrp_state_t new_state)
 }
 
 int
-vrrp_state_initial(vrrp_session_t *session)
+vrrp_state_initial(struct vrrp_session *session)
 {
 	int 	ret;
 
@@ -1487,10 +1489,10 @@ vrrp_state_initial(vrrp_session_t *session)
  * are kept as verbatim as possible for maintainability and readability.
  */
 int
-vrrp_state_slave(vrrp_session_t *session)
+vrrp_state_slave(struct vrrp_session *session)
 {
 	char			buf[IP_BUF_LEN] = { 0 };
-	vrrp_pkt_t		*vpkt;
+	struct vrrp_pkt		*vpkt;
 	struct sockaddr_in	src;
 	int			ret;
 
@@ -1550,7 +1552,7 @@ vrrp_state_slave(vrrp_session_t *session)
 		}
 
 		session->vs_timer_adv = vrrp_time_add(session->vs_adv_interval);
-		session->vs_timer_mdown = (vrrp_time_t) {0, 0};
+		session->vs_timer_mdown = (struct timespec) {0, 0};
 
 		if ((ret = vrrp_state_set(session, VRRP_MASTER)) != 0) {
 			vrrp_log(LOG_ERR, "failed to set master state on %s",
@@ -1587,10 +1589,10 @@ vrrp_state_slave(vrrp_session_t *session)
 }
 
 int
-vrrp_state_master(vrrp_session_t *session)
+vrrp_state_master(struct vrrp_session *session)
 {
 	char			buf[IP_BUF_LEN] = { 0 };
-	vrrp_pkt_t		*vpkt;
+	struct vrrp_pkt		*vpkt;
 	struct sockaddr_in	src;
 	int			ret;
 
@@ -1683,7 +1685,7 @@ vrrp_state_master(vrrp_session_t *session)
 
 			session->vs_timer_mdown =
 			    vrrp_time_add(session->vs_master_down_interval);
-			session->vs_timer_adv = (vrrp_time_t) {0, 0};
+			session->vs_timer_adv = (struct timespec) {0, 0};
 
 			if ((ret = vrrp_state_set(session, VRRP_SLAVE)) != 0) {
 				vrrp_log(LOG_ERR, "failed to set slave state "
@@ -1701,8 +1703,8 @@ vrrp_state_master(vrrp_session_t *session)
 void *
 vrrp_state_thread(void *arg)
 {
-	vrrp_session_t	*session = (vrrp_session_t *)arg;
-	int		ret = 0;
+	struct vrrp_session	*session = (struct vrrp_session *)arg;
+	int			ret = 0;
 
 	vrrp_rwlock_wrlock(&vrrp_list_rwlock);
 	vrrp_inuse_cnt++;
@@ -1760,7 +1762,7 @@ vrrp_state_thread(void *arg)
  * need an open, raw socket on the VRRP protocol.
  */
 int
-vrrp_intf_setup_common(intf_t *intf)
+vrrp_intf_setup_common(struct intf *intf)
 {
 	struct ifreq	ifr = {{{ 0 }}};
 
@@ -1826,7 +1828,7 @@ out1:
  * advertisements there.
  */
 int
-vrrp_intf_setup_prim(intf_t *prim)
+vrrp_intf_setup_prim(struct intf *prim)
 {
 	struct ifreq		ifr = {{{ 0 }}};
 	struct ip_mreqn		mr = {{ 0 }};
@@ -1874,7 +1876,7 @@ vrrp_intf_setup_prim(intf_t *prim)
 	if (ioctl(prim->intf_mgmt, SIOCGIFFLAGS, &ifr) != 0) {
 		vrrp_log(LOG_ERR, "failed to get flags for %s (%s)",
 		    ifr.ifr_name, strerror(errno));
-		return (B_FALSE);
+		return (false);
 	}
 	if (ifr.ifr_flags & IFF_UP) {
 		if ((ret = vrrp_intf_up(prim)) != 0) {
@@ -1934,14 +1936,14 @@ int
 vrrp_config_load(int *ret_alloced, int *ret_deleted)
 {
 	DIR			*dir;
-	struct dirent		de, *res;
+	struct dirent		*de;
 	FILE			*fp;
 	char			buf[64], *field, *val, *end, *sep = " \t\n";
 	char			fname[MAX_FNAME_LEN], *slash;
 	char			*rpt = "repeated entry %s on %s";
-	vrrp_session_t		cfg, *session;
-	intf_t			*prim, *vip;
-	boolean_t		err;
+	struct vrrp_session	cfg, *session;
+	struct intf		*prim, *vip;
+	bool			err;
 	uint64_t		tmp;
 	int			ii, nmask, ret, alloced, deleted;
 
@@ -1975,7 +1977,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 	}
 
 	for (;;) {
-		if (readdir_r(dir, &de, &res) != 0) {
+		if ((de = readdir(dir)) == NULL) {
 			vrrp_log(LOG_ERR, "error reading %s (%s)",
 			    VRRP_CONF_DIR, strerror(errno));
 			(void) closedir(dir);
@@ -1983,21 +1985,14 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 		}
 
 		/*
-		 * End of directory is indicated by return NULL in res.
-		 */
-		if (res == NULL) {
-			break;
-		}
-
-		/*
 		 * Skip non regular files.
 		 */
-		if (de.d_type != DT_REG) {
+		if (de->d_type != DT_REG) {
 			continue;
 		}
 
 		(void) snprintf(fname, sizeof (fname), "%s/%s", VRRP_CONF_DIR,
-		    de.d_name);
+		    de->d_name);
 
 		if ((fp = fopen(fname, "r")) == NULL) {
 			vrrp_log(LOG_ERR, "failed to open %s (%s)", fname,
@@ -2009,7 +2004,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 		prim = &cfg.vs_primary;
 		vip = &cfg.vs_vip;
 
-		err = B_FALSE;
+		err = false;
 		tmp = 0;
 
 		(void) strlcpy(cfg.vs_file, fname, sizeof (cfg.vs_file));
@@ -2029,14 +2024,14 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 
 			if (field[0] == '\0' || val[0] == '\0') {
 				vrrp_log(LOG_ERR, "empty field and/or val");
-				err = B_TRUE;
+				err = true;
 				break;
 			}
 
 			if (strcmp(field, "primary_intf") == 0) {
 				if (prim->intf_name[0] != '\0') {
 					vrrp_log(LOG_ERR, rpt, field, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
@@ -2046,7 +2041,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 			} else if (strcmp(field, "vrrp_intf") == 0) {
 				if (vip->intf_name[0] != '\0') {
 					vrrp_log(LOG_ERR, rpt, field, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
@@ -2056,14 +2051,14 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 			} else if (strcmp(field, "vip") == 0) {
 				if (vip->intf_addr_str[0] != '\0') {
 					vrrp_log(LOG_ERR, rpt, field, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
 				if ((slash = strchr(val, '/')) == NULL) {
 					vrrp_log(LOG_ERR, "VIP address missing "
 					    "netmask on %s", fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
@@ -2075,14 +2070,14 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				if (inet_aton(val, &vip->intf_addr) != 1) {
 					vrrp_log(LOG_ERR, "failed to convert "
 					    "VIP on %s", fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
 				if (vrrp_strtoul(++slash, &tmp) != 0) {
 					vrrp_log(LOG_ERR, "failed to convert "
 					    "netmask on %s", fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
@@ -2099,52 +2094,52 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 			} else if (strcmp(field, "vrid") == 0) {
 				if (cfg.vs_vrid != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
 				if (vrrp_strtoul(val, &tmp) != 0) {
 					vrrp_log(LOG_ERR, "failed to convert "
 					    "vrid on %s", fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				} else if (tmp < 1 || tmp >= 255) {
 					vrrp_log(LOG_ERR,
 					    "illegal vrid on %s", fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				} else {
-					cfg.vs_vrid = (vrid_t)tmp;
+					cfg.vs_vrid = (uint8_t)tmp;
 				}
 
 			} else if (strcmp(field, "priority") == 0) {
 				if (cfg.vs_priority != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
 				if (vrrp_strtoul(val, &tmp) != 0) {
 					vrrp_log(LOG_ERR, "failed to convert "
 					    " priority on %s", fname);
-					err = B_TRUE;
+					err = true;
 					break;
 
 				} else if (tmp <= 0 || tmp >= VRRP_PRIO_OWNER) {
 					vrrp_log(LOG_ERR,
 					    "illegal priority %lu on %s",
 					    tmp, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 
 				} else {
-					cfg.vs_priority = (prio_t)tmp;
+					cfg.vs_priority = (uint8_t)tmp;
 				}
 
 			} else if (strcmp(field, "advert_int") == 0) {
 				if (cfg.vs_adv_interval != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
@@ -2152,7 +2147,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 					vrrp_log(LOG_ERR, "failed to convert "
 					    "advertisement interval on %s",
 					    fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
@@ -2164,7 +2159,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 					vrrp_log(LOG_ERR, "illegal "
 					    "advertisement interval %lu on %s",
 					    tmp, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
@@ -2186,7 +2181,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 			} else if (strcmp(field, "version") == 0) {
 				if (cfg.vs_version != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
@@ -2196,32 +2191,32 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 					vrrp_log(LOG_ERR,
 					    "invalid version %s on %s",
 					    val, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
 			} else if (strcmp(field, "allow_preemption") == 0) {
 				if (cfg.vs_allow_preemption != 0) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 
 				if (strcmp(val, "yes") == 0) {
-					cfg.vs_allow_preemption = B_TRUE;
+					cfg.vs_allow_preemption = true;
 				} else if (strcmp(val, "no") == 0) {
-					cfg.vs_allow_preemption = B_FALSE;
+					cfg.vs_allow_preemption = false;
 				} else {
 					vrrp_log(LOG_ERR,
 					    "invalid value '%s' on %s",
 					    val, fname);
-					err = B_TRUE;
+					err = true;
 					break;
 				}
 			} else {
 				vrrp_log(LOG_ERR, "invalid field '%s' on %s",
 				    field, fname);
-				err = B_TRUE;
+				err = true;
 				break;
 			}
 		}
@@ -2363,12 +2358,12 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
  * and to check if the daemon is already running.
  */
 int
-vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
+vrrp_ctrl_send(struct vrrp_ctrl_msg *cmsg)
 {
 	struct sockaddr_un	addr = { 0 };
 	int			send_socket, ret = 0;
-	ctrl_msg_t		msg_type;
-	vrrp_session_t		session;
+	ctrl_msg		msg_type;
+	struct vrrp_session	session;
 
 	/*
 	 * First we send the command to the daemon..
@@ -2382,7 +2377,7 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 	addr.sun_family = AF_UNIX;
 	(void) strlcpy(addr.sun_path, VRRP_UNIX_SOCKET, sizeof (addr.sun_path));
 
-	msg_type = ctrl_msg->vcm_msg;
+	msg_type = cmsg->vcm_msg;
 	ret = 0;
 
 	if (connect(send_socket, (struct sockaddr *)&addr,
@@ -2393,7 +2388,7 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 		return (EIO);
 	}
 
-	if (write(send_socket, ctrl_msg, sizeof (*ctrl_msg)) < 0) {
+	if (write(send_socket, cmsg, sizeof (*cmsg)) < 0) {
 		vrrp_log(LOG_ERR, "failed to send message to daemon (%s)",
 		    strerror(errno));
 		(void) close(send_socket);
@@ -2409,24 +2404,23 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 	case CTRL_VIP_STATE:
 	case CTRL_CLEAR_COUNTERS:
 	case CTRL_LOG_LEVEL:
-		if (read(send_socket, ctrl_msg, sizeof (*ctrl_msg)) !=
-		    sizeof (*ctrl_msg)) {
+		if (read(send_socket, cmsg, sizeof (*cmsg)) != sizeof (*cmsg)) {
 			vrrp_log(LOG_ERR, "failed to get reply");
 			ret = EIO;
 		} else {
-			vrrp_log(LOG_INFO, "%s", ctrl_msg->vcm_buf);
+			vrrp_log(LOG_INFO, "%s", cmsg->vcm_buf);
 		}
 		break;
 
 	case CTRL_SHOW:
 		for (;;) {
-			if (read(send_socket, ctrl_msg, sizeof (*ctrl_msg)) !=
-			    sizeof (*ctrl_msg)) {
+			if (read(send_socket, cmsg, sizeof (*cmsg)) !=
+			    sizeof (*cmsg)) {
 				break;
 			}
 
 			(void) memcpy((void *)&session,
-			    (void *)ctrl_msg->vcm_buf, sizeof (session));
+			    (void *)cmsg->vcm_buf, sizeof (session));
 
 			if (session.vs_file[0] == '\0') {
 				break;
@@ -2443,8 +2437,7 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 		 * and we only get an interrupt in the read(2) call below, so
 		 * just wait for it.
 		 */
-		if (read(send_socket, ctrl_msg, sizeof (*ctrl_msg)) !=
-		    sizeof (*ctrl_msg)) {
+		if (read(send_socket, cmsg, sizeof (*cmsg)) != sizeof (*cmsg)) {
 			ret = EXIT_SUCCESS;
 		}
 		break;
@@ -2453,8 +2446,8 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 		break;
 
 	default:
-		(void) strlcpy(ctrl_msg->vcm_buf, "invalid command",
-		    sizeof (ctrl_msg->vcm_buf));
+		(void) strlcpy(cmsg->vcm_buf, "invalid command",
+		    sizeof (cmsg->vcm_buf));
 		ret = 0;
 		break;
 	}
@@ -2465,26 +2458,26 @@ vrrp_ctrl_send(vrrp_ctrl_msg_t *ctrl_msg)
 }
 
 /*
- * Send each configured vrrp_session_t to the client using the given socket and
- * vrrp_ctrl_msg structure. We send one at a time to ssessionify things.
+ * Send each configured struct vrrp_session to the client using the given socket
+ * and vrrp_ctrl_msg structure. We send one at a time to ssessionify things.
  */
 int
-vrrp_send_session(socket_t conn_socket, vrrp_ctrl_msg_t *ctrl_msg)
+vrrp_send_session(int conn_socket, struct vrrp_ctrl_msg *cmsg)
 {
-	vrrp_session_t	*session;
-	int		ii, ret = 0;
+	struct vrrp_session	*session;
+	int			ii, ret = 0;
 
-	assert(sizeof (ctrl_msg->vcm_buf) > sizeof (*session));
+	assert(sizeof (cmsg->vcm_buf) > sizeof (*session));
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
 		session = &vrrp_session_array[ii];
-		(void) memset(ctrl_msg, 0, sizeof (*ctrl_msg));
+		(void) memset(cmsg, 0, sizeof (*cmsg));
 
 		vrrp_rwlock_rdlock(&session->vs_rwlock);
 
 		if (session->vs_session_state != SS_FREE) {
-			(void) memcpy(ctrl_msg->vcm_buf, session,
+			(void) memcpy(cmsg->vcm_buf, session,
 			    sizeof (*session));
 			vrrp_rwlock_unlock(&session->vs_rwlock);
 		} else {
@@ -2492,8 +2485,7 @@ vrrp_send_session(socket_t conn_socket, vrrp_ctrl_msg_t *ctrl_msg)
 			continue;
 		}
 
-		if (write(conn_socket, ctrl_msg,
-		    sizeof (*ctrl_msg)) == -1) {
+		if (write(conn_socket, cmsg, sizeof (*cmsg)) == -1) {
 			vrrp_log(LOG_INFO, "server failed to show (%s)",
 			    strerror(errno));
 			ret = EIO;
@@ -2504,10 +2496,10 @@ vrrp_send_session(socket_t conn_socket, vrrp_ctrl_msg_t *ctrl_msg)
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
 
 	/*
-	 * Zero the ctrl_msg on our way out so the client interprets a blank
+	 * Zero the cmsg on our way out so the client interprets a blank
 	 * structure as the end of the transimission.
 	 */
-	(void) memset(ctrl_msg, 0, sizeof (*ctrl_msg));
+	(void) memset(cmsg, 0, sizeof (*cmsg));
 
 	return (ret);
 }
@@ -2516,12 +2508,12 @@ vrrp_send_session(socket_t conn_socket, vrrp_ctrl_msg_t *ctrl_msg)
  * Walk the current config and generate a summary.
  */
 void
-vrrp_summary(vrrp_ctrl_msg_t *ctrl_msg)
+vrrp_summary(struct vrrp_ctrl_msg *cmsg)
 {
-	vrrp_session_t	*session;
-	int		ii, ninitial = 0, nslave = 0, nmaster = 0;
+	struct vrrp_session	*session;
+	int			ii, ninitial = 0, nslave = 0, nmaster = 0;
 
-	assert(sizeof (ctrl_msg->vcm_buf) > sizeof (*session));
+	assert(sizeof (cmsg->vcm_buf) > sizeof (*session));
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
 
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
@@ -2552,7 +2544,7 @@ vrrp_summary(vrrp_ctrl_msg_t *ctrl_msg)
 
 	vrrp_rwlock_unlock(&vrrp_list_rwlock);
 
-	(void) snprintf(ctrl_msg->vcm_buf, sizeof (ctrl_msg->vcm_buf),
+	(void) snprintf(cmsg->vcm_buf, sizeof (cmsg->vcm_buf),
 	    "%d initial session(s)\n"
 	    "%d slave session(s)\n"
 	    "%d master session(s)",
@@ -2565,24 +2557,23 @@ vrrp_ctrl_handler(void *arg)
 	int			n, conn_socket = (intptr_t)arg;
 	int			alloced, deleted;
 	uint64_t		val;
-	vrrp_ctrl_msg_t		ctrl_msg;
+	struct vrrp_ctrl_msg	cmsg;
 
 	for (;;) {
-		if (read(conn_socket, &ctrl_msg, sizeof (ctrl_msg)) !=
-		    sizeof (ctrl_msg)) {
+		if (read(conn_socket, &cmsg, sizeof (cmsg)) != sizeof (cmsg)) {
 			break;
 		}
 
-		switch (ctrl_msg.vcm_msg) {
+		switch (cmsg.vcm_msg) {
 		case CTRL_RELOAD:
 			if (vrrp_config_load(&alloced, &deleted) != 0) {
-				(void) strlcpy(ctrl_msg.vcm_buf,
+				(void) strlcpy(cmsg.vcm_buf,
 				    "error loading configuration",
-				    sizeof (ctrl_msg.vcm_buf));
+				    sizeof (cmsg.vcm_buf));
 
 			} else if (alloced != 0 || deleted != 0) {
-				(void) snprintf(ctrl_msg.vcm_buf,
-				    sizeof (ctrl_msg.vcm_buf),
+				(void) snprintf(cmsg.vcm_buf,
+				    sizeof (cmsg.vcm_buf),
 				    "%d session(s) loaded\n"
 				    "%d session(s) deleted",
 				    alloced, deleted);
@@ -2590,69 +2581,69 @@ vrrp_ctrl_handler(void *arg)
 				    "reload: %d alloced, %d deleted",
 				    alloced, deleted);
 			} else {
-				(void) snprintf(ctrl_msg.vcm_buf,
-				    sizeof (ctrl_msg.vcm_buf),
+				(void) snprintf(cmsg.vcm_buf,
+				    sizeof (cmsg.vcm_buf),
 				    "no changes to configuration");
 			}
 			break;
 
 		case CTRL_SHOW:
-			if (vrrp_send_session(conn_socket, &ctrl_msg) != 0) {
-				(void) strlcpy(ctrl_msg.vcm_buf,
+			if (vrrp_send_session(conn_socket, &cmsg) != 0) {
+				(void) strlcpy(cmsg.vcm_buf,
 				    "error showing configuration",
-				    sizeof (ctrl_msg.vcm_buf));
+				    sizeof (cmsg.vcm_buf));
 			} else {
-				(void) strlcpy(ctrl_msg.vcm_buf,
+				(void) strlcpy(cmsg.vcm_buf,
 				    "show completed",
-				    sizeof (ctrl_msg.vcm_buf));
+				    sizeof (cmsg.vcm_buf));
 			}
 			break;
 
 		case CTRL_SUMMARY:
-			vrrp_summary(&ctrl_msg);
+			vrrp_summary(&cmsg);
 			break;
 
 		case CTRL_VIP_STATE:
-			if ((n = vrrp_get_state(ctrl_msg.vcm_buf)) != 0) {
-				(void) strlcpy(ctrl_msg.vcm_buf,
+			if ((n = vrrp_get_state(cmsg.vcm_buf)) != 0) {
+				(void) strlcpy(cmsg.vcm_buf,
 				    vrrp_state_str(n),
-				    sizeof (ctrl_msg.vcm_buf));
+				    sizeof (cmsg.vcm_buf));
 			} else {
-				(void) strlcpy(ctrl_msg.vcm_buf,
+				(void) strlcpy(cmsg.vcm_buf,
 				    "invalid interface",
-				    sizeof (ctrl_msg.vcm_buf));
+				    sizeof (cmsg.vcm_buf));
 			}
 			break;
 
 		case CTRL_CLEAR_COUNTERS:
 			vrrp_clear_counters();
-			(void) strlcpy(ctrl_msg.vcm_buf, "counters cleared",
-			    sizeof (ctrl_msg.vcm_buf));
+			(void) strlcpy(cmsg.vcm_buf, "counters cleared",
+			    sizeof (cmsg.vcm_buf));
 			break;
 
 		case CTRL_LOG_LEVEL:
-			if (vrrp_strtoul(ctrl_msg.vcm_buf, &val) != 0) {
-				(void) strlcpy(ctrl_msg.vcm_buf,
+			if (vrrp_strtoul(cmsg.vcm_buf, &val) != 0) {
+				(void) strlcpy(cmsg.vcm_buf,
 				    "failed to convert new log level",
-				    sizeof (ctrl_msg.vcm_buf));
+				    sizeof (cmsg.vcm_buf));
 				break;
 			}
 
 			if (val != LOG_INFO && val != LOG_ERR) {
-				(void) strlcpy(ctrl_msg.vcm_buf,
+				(void) strlcpy(cmsg.vcm_buf,
 				    "invalid log level specified",
-				    sizeof (ctrl_msg.vcm_buf));
+				    sizeof (cmsg.vcm_buf));
 				break;
 			}
 
 			pthread_mutex_lock(&vrrp_log_mutex);
-			vrrp_log_level = (log_level_t)val;
+			vrrp_log_level = (log_level)val;
 			pthread_mutex_unlock(&vrrp_log_mutex);
 
 			vrrp_log(LOG_INFO, "log level set to %d",
 			    vrrp_log_level);
-			(void) strlcpy(ctrl_msg.vcm_buf, "log level modified",
-			    sizeof (ctrl_msg.vcm_buf));
+			(void) strlcpy(cmsg.vcm_buf, "log level modified",
+			    sizeof (cmsg.vcm_buf));
 			break;
 
 		case CTRL_QUIT:
@@ -2674,7 +2665,7 @@ vrrp_ctrl_handler(void *arg)
 			break;
 		}
 
-		if (write(conn_socket, &ctrl_msg, sizeof (ctrl_msg)) < 0) {
+		if (write(conn_socket, &cmsg, sizeof (cmsg)) < 0) {
 			vrrp_log(LOG_INFO, "server failed to reply");
 			break;
 		}
@@ -2761,7 +2752,7 @@ vrrp_init(void)
 {
 	pthread_mutexattr_t	mattr;
 	pthread_rwlockattr_t	rwattr;
-	vrrp_session_t		*session;
+	struct vrrp_session	*session;
 	struct sigaction	sig = {{ 0 }};
 	int			ii, ret, alloced, deleted;
 
@@ -2833,7 +2824,7 @@ vrrp_init(void)
 	return (vrrp_ctrl_listener());
 }
 
-boolean_t
+bool
 vrrp_is_running(void)
 {
 	struct sockaddr_un	addr = { 0 };
@@ -2842,7 +2833,7 @@ vrrp_is_running(void)
 	if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
 		vrrp_log(LOG_ERR, "failed to open UNIX socket (%s)",
 		    strerror(errno));
-		return (B_FALSE);
+		return (false);
 	}
 
 	addr.sun_family = AF_UNIX;
@@ -2850,22 +2841,22 @@ vrrp_is_running(void)
 
 	if (connect(sock, (struct sockaddr *)&addr, sizeof (addr)) == -1) {
 		close(sock);
-		return (B_FALSE);
+		return (false);
 	}
 
 	(void) close(sock);
 
-	return (B_TRUE);
+	return (true);
 }
 
 int
 main(int argc, char **argv)
 {
-	vrrp_ctrl_msg_t	ctrl_msg = { 0 };
-	struct rlimit	rl = {VRRP_NFDS, VRRP_NFDS};
-	char		ch;
-	pid_t		pid;
-	boolean_t	running;
+	struct vrrp_ctrl_msg	cmsg = { 0 };
+	struct rlimit		rl = {VRRP_NFDS, VRRP_NFDS};
+	char			ch;
+	pid_t			pid;
+	bool			running;
 
 	/*
 	 * Invoking nvrrp(1) without any options will start the daemon load
@@ -2878,47 +2869,47 @@ main(int argc, char **argv)
 		while ((ch = getopt(argc, argv, "rsSv:l:qchV")) != -1) {
 			switch (ch) {
 			case 'r':
-				ctrl_msg.vcm_msg = CTRL_RELOAD;
+				cmsg.vcm_msg = CTRL_RELOAD;
 				break;
 
 			case 's':
-				ctrl_msg.vcm_msg = CTRL_SHOW;
+				cmsg.vcm_msg = CTRL_SHOW;
 				break;
 
 			case 'S':
-				ctrl_msg.vcm_msg = CTRL_SUMMARY;
+				cmsg.vcm_msg = CTRL_SUMMARY;
 				break;
 
 			case 'v':
 				if (optarg != NULL && optarg[0] != '\0') {
-					ctrl_msg.vcm_msg = CTRL_VIP_STATE;
-					(void) snprintf(ctrl_msg.vcm_buf,
-					    sizeof (ctrl_msg.vcm_buf), "%s",
+					cmsg.vcm_msg = CTRL_VIP_STATE;
+					(void) snprintf(cmsg.vcm_buf,
+					    sizeof (cmsg.vcm_buf), "%s",
 					    optarg);
 				}
 				break;
 
 			case 'l':
 				if (optarg != NULL && optarg[0] != '\0') {
-					ctrl_msg.vcm_msg = CTRL_LOG_LEVEL;
-					(void) snprintf(ctrl_msg.vcm_buf,
-					    sizeof (ctrl_msg.vcm_buf), "%s",
+					cmsg.vcm_msg = CTRL_LOG_LEVEL;
+					(void) snprintf(cmsg.vcm_buf,
+					    sizeof (cmsg.vcm_buf), "%s",
 					    optarg);
 				}
 				break;
 
 			case 'q':
-				ctrl_msg.vcm_msg = CTRL_QUIT;
+				cmsg.vcm_msg = CTRL_QUIT;
 				break;
 
 			case 'c':
-				ctrl_msg.vcm_msg = CTRL_CLEAR_COUNTERS;
+				cmsg.vcm_msg = CTRL_CLEAR_COUNTERS;
 				break;
 
 			case 'V':
 				vrrp_log(LOG_INFO, "nvrrp version %d.%d :: "
-				    "http://launchpad.net/nvrrp", VERSION_MAJOR,
-				    VERSION_MINOR);
+				    "http://github.com/rafaelvanoni/nvrrp",
+				    VERSION_MAJOR, VERSION_MINOR);
 				return (EXIT_SUCCESS);
 
 			case '?':
@@ -2928,13 +2919,13 @@ main(int argc, char **argv)
 			}
 		}
 
-		if (ctrl_msg.vcm_msg == 0) {
+		if (cmsg.vcm_msg == 0) {
 			vrrp_quit("%s", vrrp_usage_str);
 		} else if (!running) {
 			vrrp_quit("daemon isn't running");
 		}
 
-		return (vrrp_ctrl_send(&ctrl_msg));
+		return (vrrp_ctrl_send(&cmsg));
 	}
 
 	if (running) {
@@ -2978,7 +2969,7 @@ main(int argc, char **argv)
 		vrrp_quit("failed to set RLIMIT_NOFILE");
 	}
 
-	vrrp_daemon = B_TRUE;
+	vrrp_daemon = true;
 	vrrp_log_level = (LOG_ERR | LOG_INFO);
 
 	return (vrrp_init());
