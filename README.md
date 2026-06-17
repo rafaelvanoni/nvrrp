@@ -84,30 +84,30 @@ nvrrp offers a client that can be used to gather information from the current st
                   vrid 5
               priority 100
           adv interval 1000000000
-        master adv int 1000000000
-       master down int 1000000000
+        active adv int 1000000000
+       active down int 1000000000
              skew time 609375000
              timer adv 559146 397622489
            timer mdown 0 0
               iphdr id 564
                version 3
-                 state master
+                 state active
          allow preempt yes
-       slave to master 1
-       master to slave 0
-      slave to initial 0
-     master to initial 0
+      backup to active 1
+      active to backup 0
+     backup to initial 0
+     active to initial 0
          adverts recvd 0
           adverts sent 564
            send errors 0
 
     # nvrrp -S
     0 initial session(s)
-    0 slave session(s)
-    1 master session(s)
+    0 backup session(s)
+    1 active session(s)
 
     # nvrrp -v eth2.2
-    master
+    active
 ```
 Note that the interval values above are in nanoseconds and the timers are in the "seconds nanosecons" format.
 
