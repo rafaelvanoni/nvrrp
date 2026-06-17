@@ -108,8 +108,8 @@ typedef enum {
 #define	VRRP_PRIO_DEFAULT	(100)
 
 /*
- * Special priority to indicate that the current master has gone south and to
- * trigger the election of a backup router w/o waiting for the master to return.
+ * Special priority to indicate that the current active has gone south and to
+ * trigger the election of a backup router w/o waiting for the active to return.
  */
 #define	VRRP_PRIO_ZERO		(0)
 
@@ -164,8 +164,8 @@ typedef enum {
 
 typedef enum {
 	VRRP_INITIAL		= 1,	/* wait for startup event */
-	VRRP_SLAVE		= 2,	/* monitor state of master router */
-	VRRP_MASTER		= 3,	/* function as the forwarding router */
+	VRRP_BACKUP		= 2,	/* monitor state of active router */
+	VRRP_ACTIVE		= 3,	/* function as the forwarding router */
 	VRRP_SHUTDOWN		= 4	/* session is exiting.. */
 } vrrp_state;
 
@@ -233,19 +233,19 @@ struct vrrp_session {
 	bool			vs_allow_preemption;
 
 	/*
-	 * Current master's advertisement interval in nanoseconds. Used in
-	 * slave mode to calculate vs_master_down_interval and vs_skew_time.
+	 * Current active's advertisement interval in nanoseconds. Used in
+	 * backup mode to calculate vs_active_down_interval and vs_skew_time.
 	 * Initialized to vs_adv_interval.
 	 */
-	int64_t			vs_master_adv_interval;
+	int64_t			vs_active_adv_interval;
 	/*
-	 * Interval in nanoseconds for backup to declare master as down.
-	 *   (( 3 * vs_master_adv_interval ) + vs_skew_time )
+	 * Interval in nanoseconds for backup to declare active as down.
+	 *   (( 3 * vs_active_adv_interval ) + vs_skew_time )
 	 */
-	int64_t			vs_master_down_interval;
+	int64_t			vs_active_down_interval;
 	/*
-	 * Time to skew vs_master_down_interval in nanoseconds.
-	 *   ((( 256 - vs_priority ) * vs_master_adv_interval ) / 256 )
+	 * Time to skew vs_active_down_interval in nanoseconds.
+	 *   ((( 256 - vs_priority ) * vs_active_adv_interval ) / 256 )
 	 */
 	int64_t			vs_skew_time;
 

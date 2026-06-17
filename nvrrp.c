@@ -165,10 +165,10 @@ vrrp_state_str(vrrp_state state)
 	switch (state) {
 	case VRRP_INITIAL:
 		return ("initial");
-	case VRRP_SLAVE:
-		return ("slave");
-	case VRRP_MASTER:
-		return ("master");
+	case VRRP_BACKUP:
+		return ("backup");
+	case VRRP_ACTIVE:
+		return ("active");
 	case VRRP_SHUTDOWN:
 		return ("shutdown");
 	}
@@ -388,8 +388,8 @@ vrrp_session_inuse(struct vrrp_session *dest, struct vrrp_session *src)
 	dest->vs_priority = src->vs_priority;
 	dest->vs_adv_interval = src->vs_adv_interval;
 	dest->vs_allow_preemption = src->vs_allow_preemption;
-	dest->vs_master_adv_interval = src->vs_master_adv_interval;
-	dest->vs_master_down_interval = src->vs_master_down_interval;
+	dest->vs_active_adv_interval = src->vs_active_adv_interval;
+	dest->vs_active_down_interval = src->vs_active_down_interval;
 	dest->vs_skew_time = src->vs_skew_time;
 	dest->vs_timer_adv = src->vs_timer_adv;
 	dest->vs_timer_mdown = src->vs_timer_mdown;
@@ -430,8 +430,8 @@ vrrp_session_clear(struct vrrp_session *session)
 	session->vs_priority = 0;
 	session->vs_adv_interval = 0;
 	session->vs_allow_preemption = true;
-	session->vs_master_adv_interval = 0;
-	session->vs_master_down_interval = 0;
+	session->vs_active_adv_interval = 0;
+	session->vs_active_down_interval = 0;
 	session->vs_skew_time = 0;
 	session->vs_timer_adv = (struct timespec) {0, 0};
 	session->vs_timer_mdown = (struct timespec) {0, 0};
@@ -543,8 +543,8 @@ vrrp_show_session(struct vrrp_session *session)
 	    "%*s %u\n" 		/* vrid */
 	    "%*s %u\n" 		/* priority */
 	    "%*s %ld\n"		/* adv interval */
-	    "%*s %ld\n"		/* master adv int */
-	    "%*s %ld\n"		/* master down int */
+	    "%*s %ld\n"		/* active adv int */
+	    "%*s %ld\n"		/* active down int */
 	    "%*s %ld\n"		/* skew time */
 	    "%*s %ld %ld\n"	/* timer adv */
 	    "%*s %ld %ld\n"	/* timer mdown */
@@ -552,10 +552,10 @@ vrrp_show_session(struct vrrp_session *session)
 	    "%*s %s\n" 		/* version */
 	    "%*s %s\n" 		/* state */
 	    "%*s %s\n"		/* allow preempt */
-	    "%*s %lu\n"		/* slave to master transitions */
-	    "%*s %lu\n"		/* master to slave transitions */
-	    "%*s %lu\n"		/* slave to initial transitions */
-	    "%*s %lu\n"		/* master to initial transitions */
+	    "%*s %lu\n"		/* backup to active transitions */
+	    "%*s %lu\n"		/* active to backup transitions */
+	    "%*s %lu\n"		/* backup to initial transitions */
+	    "%*s %lu\n"		/* active to initial transitions */
 	    "%*s %lu\n"		/* number of received advertisements */
 	    "%*s %lu\n"		/* number of advertisements sent */
 	    "%*s %lu\n",	/* number of send errors */
@@ -575,8 +575,8 @@ vrrp_show_session(struct vrrp_session *session)
 	    pad, "vrid", session->vs_vrid,
 	    pad, "priority", session->vs_priority,
 	    pad, "adv interval", session->vs_adv_interval,
-	    pad, "master adv int", session->vs_master_adv_interval,
-	    pad, "master down int", session->vs_master_down_interval,
+	    pad, "active adv int", session->vs_active_adv_interval,
+	    pad, "active down int", session->vs_active_down_interval,
 	    pad, "skew time", session->vs_skew_time,
 	    pad, "timer adv", session->vs_timer_adv.tv_sec,
 	    session->vs_timer_adv.tv_nsec,
@@ -586,10 +586,10 @@ vrrp_show_session(struct vrrp_session *session)
 	    pad, "version", session->vs_version == VRRP_VERSION_2 ? "2" : "3",
 	    pad, "state", vrrp_state_str(session->vs_state),
 	    pad, "allow preempt", session->vs_allow_preemption ? "yes" : "no",
-	    pad, "slave to master", session->vs_counter_s2m,
-	    pad, "master to slave", session->vs_counter_m2s,
-	    pad, "slave to initial", session->vs_counter_s2i,
-	    pad, "master to initial", session->vs_counter_m2i,
+	    pad, "backup to active", session->vs_counter_s2m,
+	    pad, "active to backup", session->vs_counter_m2s,
+	    pad, "backup to initial", session->vs_counter_s2i,
+	    pad, "active to initial", session->vs_counter_m2i,
 	    pad, "adverts recvd", session->vs_counter_recvd,
 	    pad, "adverts sent", session->vs_counter_sent,
 	    pad, "send errors", session->vs_counter_err);
@@ -1380,14 +1380,14 @@ vrrp_state_set(struct vrrp_session *session, vrrp_state new_state)
 	old_state = session->vs_state;
 	session->vs_state = new_state;
 
-	if (old_state == VRRP_MASTER) {
-		if (new_state == VRRP_SLAVE) {
+	if (old_state == VRRP_ACTIVE) {
+		if (new_state == VRRP_BACKUP) {
 			session->vs_counter_m2s++;
 		} else if (new_state == VRRP_INITIAL) {
 			session->vs_counter_m2i++;
 		}
-	} else if (old_state == VRRP_SLAVE) {
-		if (new_state == VRRP_MASTER) {
+	} else if (old_state == VRRP_BACKUP) {
+		if (new_state == VRRP_ACTIVE) {
 			session->vs_counter_s2m++;
 		} else if (new_state == VRRP_INITIAL) {
 			session->vs_counter_s2i++;
@@ -1413,7 +1413,7 @@ vrrp_state_set(struct vrrp_session *session, vrrp_state new_state)
 		 */
 		break;
 
-	case VRRP_SLAVE:
+	case VRRP_BACKUP:
 		ret = vrrp_intf_down(&session->vs_vip);
 		break;
 
@@ -1426,7 +1426,7 @@ vrrp_state_set(struct vrrp_session *session, vrrp_state new_state)
 		session->vs_timer_mdown = (struct timespec) {0, 0};
 		break;
 
-	case VRRP_MASTER:
+	case VRRP_ACTIVE:
 		ret = vrrp_intf_setup_vip(&session->vs_vip);
 		break;
 
@@ -1451,7 +1451,7 @@ vrrp_state_initial(struct vrrp_session *session)
 		/*
 		 * We ignore errors in this case because the initial state is
 		 * the fallback state for such errors. If they persist, we'll
-		 * handle them accordingly once we're in master state.
+		 * handle them accordingly once we're in active state.
 		 */
 		(void) vrrp_adv_send(session, session->vs_priority);
 
@@ -1459,22 +1459,22 @@ vrrp_state_initial(struct vrrp_session *session)
 
 		session->vs_timer_adv = vrrp_time_add(session->vs_adv_interval);
 
-		if ((ret = vrrp_state_set(session, VRRP_MASTER)) != 0) {
-			vrrp_log(LOG_ERR, "failed to set master state on %s",
+		if ((ret = vrrp_state_set(session, VRRP_ACTIVE)) != 0) {
+			vrrp_log(LOG_ERR, "failed to set active state on %s",
 			    session->vs_file);
 			return (ret);
 		}
 
 	} else {
-		session->vs_master_adv_interval = session->vs_adv_interval;
+		session->vs_active_adv_interval = session->vs_adv_interval;
 
-		assert(session->vs_master_down_interval != 0);
+		assert(session->vs_active_down_interval != 0);
 
 		session->vs_timer_mdown =
-		    vrrp_time_add(session->vs_master_down_interval);
+		    vrrp_time_add(session->vs_active_down_interval);
 
-		if ((ret = vrrp_state_set(session, VRRP_SLAVE)) != 0) {
-			vrrp_log(LOG_ERR, "failed to set slave state on %s",
+		if ((ret = vrrp_state_set(session, VRRP_BACKUP)) != 0) {
+			vrrp_log(LOG_ERR, "failed to set backup state on %s",
 			    session->vs_file);
 			return (ret);
 		}
@@ -1484,12 +1484,12 @@ vrrp_state_initial(struct vrrp_session *session)
 }
 
 /*
- * Note that the formulas for calculating the skew time and the master down
+ * Note that the formulas for calculating the skew time and the active down
  * interval come straight from the VRRPv3 RFC, and as with most of this file
  * are kept as verbatim as possible for maintainability and readability.
  */
 int
-vrrp_state_slave(struct vrrp_session *session)
+vrrp_state_backup(struct vrrp_session *session)
 {
 	char			buf[IP_BUF_LEN] = { 0 };
 	struct vrrp_pkt		*vpkt;
@@ -1510,14 +1510,14 @@ vrrp_state_slave(struct vrrp_session *session)
 	    sizeof (buf));
 
 	/*
-	 * Switch to master if the master down timer has expired, but first
+	 * Switch to active if the active down timer has expired, but first
 	 * check if the primary interface is up. If it's not, fall back to
 	 * initial state.
 	 */
 	if (vrrp_time_elapsed(session->vs_timer_mdown)) {
 		if (!vrrp_intf_is_up(&session->vs_primary)) {
 			vrrp_log(LOG_INFO, "primary is down on %s, moving from "
-			    "slave to initial state", session->vs_file);
+			    "backup to initial state", session->vs_file);
 
 			if ((ret = vrrp_state_set(session,
 			    VRRP_INITIAL)) != 0) {
@@ -1535,7 +1535,7 @@ vrrp_state_slave(struct vrrp_session *session)
 
 		if ((ret = vrrp_adv_send(session, session->vs_priority)) != 0) {
 			vrrp_log(LOG_INFO, "failed to send advert on %s, moving"
-			    " from slave to initial state", session->vs_file);
+			    " from backup to initial state", session->vs_file);
 
 			if ((ret = vrrp_state_set(session,
 			    VRRP_INITIAL)) != 0) {
@@ -1554,8 +1554,8 @@ vrrp_state_slave(struct vrrp_session *session)
 		session->vs_timer_adv = vrrp_time_add(session->vs_adv_interval);
 		session->vs_timer_mdown = (struct timespec) {0, 0};
 
-		if ((ret = vrrp_state_set(session, VRRP_MASTER)) != 0) {
-			vrrp_log(LOG_ERR, "failed to set master state on %s",
+		if ((ret = vrrp_state_set(session, VRRP_ACTIVE)) != 0) {
+			vrrp_log(LOG_ERR, "failed to set active state on %s",
 			    session->vs_file);
 			return (ret);
 		}
@@ -1571,15 +1571,15 @@ vrrp_state_slave(struct vrrp_session *session)
 		} else if (!session->vs_allow_preemption ||
 		    vpkt->vpkt_priority >= session->vs_priority) {
 
-			session->vs_master_adv_interval =
+			session->vs_active_adv_interval =
 			    vpkt->vpkt_adv_interval * CENTISEC;
 
-			session->vs_master_down_interval =
-			    ((3 * session->vs_master_adv_interval) +
+			session->vs_active_down_interval =
+			    ((3 * session->vs_active_adv_interval) +
 			    session->vs_skew_time);
 
 			session->vs_timer_mdown =
-			    vrrp_time_add(session->vs_master_down_interval);
+			    vrrp_time_add(session->vs_active_down_interval);
 		} else {
 			/* ignore the advertisement */
 		}
@@ -1589,7 +1589,7 @@ vrrp_state_slave(struct vrrp_session *session)
 }
 
 int
-vrrp_state_master(struct vrrp_session *session)
+vrrp_state_active(struct vrrp_session *session)
 {
 	char			buf[IP_BUF_LEN] = { 0 };
 	struct vrrp_pkt		*vpkt;
@@ -1616,7 +1616,7 @@ vrrp_state_master(struct vrrp_session *session)
 	if (vrrp_time_elapsed(session->vs_timer_adv)) {
 		if (!vrrp_intf_is_up(&session->vs_primary)) {
 			vrrp_log(LOG_INFO, "primary is down on %s, moving from"
-			    " master to initial state", session->vs_file);
+			    " active to initial state", session->vs_file);
 
 			if ((ret = vrrp_state_set(session,
 			    VRRP_INITIAL)) != 0) {
@@ -1630,7 +1630,7 @@ vrrp_state_master(struct vrrp_session *session)
 
 		if ((ret = vrrp_adv_send(session, session->vs_priority)) != 0) {
 			vrrp_log(LOG_INFO, "failed to send advert on %s, "
-			    "moving from master to initial state",
+			    "moving from active to initial state",
 			    session->vs_file);
 
 			if ((ret = vrrp_state_set(session,
@@ -1651,7 +1651,7 @@ vrrp_state_master(struct vrrp_session *session)
 			if ((ret = vrrp_adv_send(session,
 			    session->vs_priority)) != 0) {
 				vrrp_log(LOG_INFO, "failed to send advert on "
-				    "%s (recvd prio zero), moving from master "
+				    "%s (recvd prio zero), moving from active "
 				    "to initial state", session->vs_file);
 
 				if ((ret = vrrp_state_set(session,
@@ -1673,22 +1673,22 @@ vrrp_state_master(struct vrrp_session *session)
 		    src.sin_addr.s_addr >
 		    session->vs_primary.intf_addr.s_addr)) {
 
-			session->vs_master_adv_interval =
+			session->vs_active_adv_interval =
 			    vpkt->vpkt_adv_interval * CENTISEC;
 
 			session->vs_skew_time = (((256 - session->vs_priority) *
-			    session->vs_master_adv_interval) / 256);
+			    session->vs_active_adv_interval) / 256);
 
-			session->vs_master_down_interval =
+			session->vs_active_down_interval =
 			    ((3 * session->vs_adv_interval) +
 			    session->vs_skew_time);
 
 			session->vs_timer_mdown =
-			    vrrp_time_add(session->vs_master_down_interval);
+			    vrrp_time_add(session->vs_active_down_interval);
 			session->vs_timer_adv = (struct timespec) {0, 0};
 
-			if ((ret = vrrp_state_set(session, VRRP_SLAVE)) != 0) {
-				vrrp_log(LOG_ERR, "failed to set slave state "
+			if ((ret = vrrp_state_set(session, VRRP_BACKUP)) != 0) {
+				vrrp_log(LOG_ERR, "failed to set backup state "
 				    "on %s", session->vs_file);
 				return (ret);
 			}
@@ -1716,12 +1716,12 @@ vrrp_state_thread(void *arg)
 			ret = vrrp_state_initial(session);
 			break;
 
-		case VRRP_SLAVE:
-			ret = vrrp_state_slave(session);
+		case VRRP_BACKUP:
+			ret = vrrp_state_backup(session);
 			break;
 
-		case VRRP_MASTER:
-			ret = vrrp_state_master(session);
+		case VRRP_ACTIVE:
+			ret = vrrp_state_active(session);
 			break;
 
 		case VRRP_SHUTDOWN:
@@ -2170,12 +2170,12 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				 * internally.
 				 */
 				cfg.vs_adv_interval = tmp;
-				cfg.vs_master_adv_interval =
+				cfg.vs_active_adv_interval =
 				    cfg.vs_adv_interval;
 				cfg.vs_skew_time = (((256 - cfg.vs_priority) *
-				    cfg.vs_master_adv_interval) / 256);
-				cfg.vs_master_down_interval =
-				    ((3 * cfg.vs_master_adv_interval) +
+				    cfg.vs_active_adv_interval) / 256);
+				cfg.vs_active_down_interval =
+				    ((3 * cfg.vs_active_adv_interval) +
 				    cfg.vs_skew_time);
 
 			} else if (strcmp(field, "version") == 0) {
@@ -2511,7 +2511,7 @@ void
 vrrp_summary(struct vrrp_ctrl_msg *cmsg)
 {
 	struct vrrp_session	*session;
-	int			ii, ninitial = 0, nslave = 0, nmaster = 0;
+	int			ii, ninitial = 0, nbackup = 0, nactive = 0;
 
 	assert(sizeof (cmsg->vcm_buf) > sizeof (*session));
 	vrrp_rwlock_rdlock(&vrrp_list_rwlock);
@@ -2529,11 +2529,11 @@ vrrp_summary(struct vrrp_ctrl_msg *cmsg)
 		case VRRP_INITIAL:
 			ninitial++;
 			break;
-		case VRRP_SLAVE:
-			nslave++;
+		case VRRP_BACKUP:
+			nbackup++;
 			break;
-		case VRRP_MASTER:
-			nmaster++;
+		case VRRP_ACTIVE:
+			nactive++;
 			break;
 		default:
 			break;
@@ -2546,9 +2546,9 @@ vrrp_summary(struct vrrp_ctrl_msg *cmsg)
 
 	(void) snprintf(cmsg->vcm_buf, sizeof (cmsg->vcm_buf),
 	    "%d initial session(s)\n"
-	    "%d slave session(s)\n"
-	    "%d master session(s)",
-	    ninitial, nslave, nmaster);
+	    "%d backup session(s)\n"
+	    "%d active session(s)",
+	    ninitial, nbackup, nactive);
 }
 
 void *
