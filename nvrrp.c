@@ -151,9 +151,9 @@ vrrp_log(log_level level, const char *arg_fmt, ...)
 
 	va_start(args, arg_fmt);
 	(void) vfprintf(stream, arg_fmt, args);
-	(void) vfprintf(stream, "\n", args);
 	va_end(args);
 
+	(void) fprintf(stream, "\n");
 	(void) fflush(stream);
 
 	pthread_mutex_unlock(&vrrp_log_mutex);
