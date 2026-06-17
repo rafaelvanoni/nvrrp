@@ -799,7 +799,7 @@ vrrp_strtoul(char *buf, uint64_t *ret)
 	assert(buf[0] != '\0');
 
 	if (*(ptr = &buf[strlen(buf) - 1]) == '\n') {
-		*ptr = '0';
+		*ptr = '\0';
 	}
 
 	errno = 0;
@@ -807,12 +807,11 @@ vrrp_strtoul(char *buf, uint64_t *ret)
 
 	if (end == buf || *end != '\0') {
 		return (EINVAL);
-
 	} else if (val == ULONG_MAX && errno == ERANGE) {
 		return (ERANGE);
 	}
 
-	*ret = (int)val;
+	*ret = val;
 
 	return (0);
 }
