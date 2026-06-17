@@ -2079,6 +2079,12 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 					err = true;
 					break;
 				}
+				if (tmp > 31) {
+					vrrp_log(LOG_ERR, "invalid netmask "
+					    "on %s", fname);
+					err = true;
+					break;
+				}
 
 				/*
 				 * Convert the netmask to a struct in_addr.
