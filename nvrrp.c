@@ -750,7 +750,7 @@ vrrp_find_and_lock(char *filename, char *primary, char *vip,
 	}
 
 	if (session != NULL) {
-		pthread_rwlock_unlock(&vrrp_list_rwlock);
+		vrrp_rwlock_unlock(&vrrp_list_rwlock);
 		*ret_session = session;
 
 		return (SF_LOCKED);
