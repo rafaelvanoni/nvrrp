@@ -1942,7 +1942,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 	char			*rpt = "repeated entry %s on %s";
 	struct vrrp_session	cfg, *session;
 	struct intf		*prim, *vip;
-	bool			err;
+	bool			seen_preempt, err;
 	uint64_t		tmp;
 	int			ii, nmask, ret, alloced, deleted;
 
@@ -2004,6 +2004,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 		vip = &cfg.vs_vip;
 
 		err = false;
+		seen_preempt = false;
 		tmp = 0;
 
 		(void) strlcpy(cfg.vs_file, fname, sizeof (cfg.vs_file));
@@ -2201,11 +2202,12 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				}
 
 			} else if (strcmp(field, "allow_preemption") == 0) {
-				if (cfg.vs_allow_preemption != 0) {
+				if (seen_preempt) {
 					vrrp_log(LOG_ERR, rpt, field, fname);
 					err = true;
 					break;
 				}
+				seen_preempt = true;
 
 				if (strcmp(val, "yes") == 0) {
 					cfg.vs_allow_preemption = true;
