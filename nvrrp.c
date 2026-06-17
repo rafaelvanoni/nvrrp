@@ -2853,7 +2853,7 @@ main(int argc, char **argv)
 {
 	struct vrrp_ctrl_msg	cmsg = { 0 };
 	struct rlimit		rl = {VRRP_NFDS, VRRP_NFDS};
-	char			ch;
+	int			ch;
 	pid_t			pid;
 	bool			running;
 
