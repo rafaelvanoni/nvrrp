@@ -1875,7 +1875,7 @@ vrrp_intf_setup_prim(struct intf *prim)
 	if (ioctl(prim->intf_mgmt, SIOCGIFFLAGS, &ifr) != 0) {
 		vrrp_log(LOG_ERR, "failed to get flags for %s (%s)",
 		    ifr.ifr_name, strerror(errno));
-		return (false);
+		return (EIO);
 	}
 	if (ifr.ifr_flags & IFF_UP) {
 		if ((ret = vrrp_intf_up(prim)) != 0) {
