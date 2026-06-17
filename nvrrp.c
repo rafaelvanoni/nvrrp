@@ -1243,7 +1243,7 @@ vrrp_adv_recv(struct vrrp_session *session, struct timespec to,
 	iovec.iov_len = buf_len;
 
 	msghdr.msg_name = src;
-	msghdr.msg_namelen = sizeof (src);
+	msghdr.msg_namelen = sizeof (*src);
 	msghdr.msg_iov = &iovec;
 	msghdr.msg_iovlen = 1;
 
