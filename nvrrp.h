@@ -1,8 +1,8 @@
 /*
  * This file is part of the nvrrp project (http://github.com/rafaelvanoni/nvrrp)
  *
- * Copyright (C) 2016   Pluribus Networks
- * Copyright (C) 2021	Rafael Vanoni
+ * Copyright (C) 2016		Pluribus Networks
+ * Copyright (C) 2021-2026	Rafael Vanoni
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
