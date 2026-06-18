@@ -1229,7 +1229,7 @@ vrrp_adv_recv(struct vrrp_session *session, struct timespec to,
 	struct timespec			ts;
 	struct timeval			tv, tv_ret;
 	struct iovec			iovec;
-	struct msghdr			msghdr;
+	struct msghdr			msghdr = { 0 };
 	struct iphdr			*iphdr;
 	ssize_t				len;
 	struct vrrp_pkt			*vpkt;
