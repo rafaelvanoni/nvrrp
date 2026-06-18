@@ -1679,7 +1679,7 @@ vrrp_state_active(struct vrrp_session *session)
 			    session->vs_active_adv_interval) / 256);
 
 			session->vs_active_down_interval =
-			    ((3 * session->vs_adv_interval) +
+			    ((3 * session->vs_active_adv_interval) +
 			    session->vs_skew_time);
 
 			session->vs_timer_mdown =
