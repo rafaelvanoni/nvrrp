@@ -1283,6 +1283,12 @@ vrrp_adv_recv(struct vrrp_session *session, struct timespec to,
 	 * Verify the packet.
 	 */
 	iphdr = (struct iphdr *)msghdr.msg_iov->iov_base;
+
+	if (iphdr->ihl < 5 || len < ((iphdr->ihl << 2) + VRRP_PKT_LEN)) {
+		vrrp_log(LOG_ERR, "invalid IP header on %s", session->vs_file);
+		return (NULL);
+	}
+
 	vpkt = (struct vrrp_pkt *)((char *)iphdr + (iphdr->ihl << 2));
 
 	if (len < (sizeof (struct iphdr) + VRRP_PKT_LEN)) {
