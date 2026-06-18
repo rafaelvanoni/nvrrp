@@ -2576,6 +2576,11 @@ vrrp_ctrl_handler(void *arg)
 			break;
 		}
 
+		/*
+		 * Make sure we don't read past the message length.
+		 */
+		cmsg.vcm_buf[sizeof (cmsg.vcm_buf) - 1] = '\0';
+
 		switch (cmsg.vcm_msg) {
 		case CTRL_RELOAD:
 			if (vrrp_config_load(&alloced, &deleted) != 0) {
