@@ -459,7 +459,10 @@ vrrp_session_cmp(struct vrrp_session *a, struct vrrp_session *b)
 	assert(a != NULL);
 	assert(b != NULL);
 	assert(memcmp(a->vs_file, b->vs_file, sizeof (a->vs_file)) == 0);
-	assert(a->vs_version == b->vs_version);
+
+	if (a->vs_version != b->vs_version) {
+		return (SC_VRID);
+	}
 
 	ap = &a->vs_primary;
 	bp = &b->vs_primary;
