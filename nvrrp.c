@@ -2097,7 +2097,7 @@ vrrp_config_load(int *ret_alloced, int *ret_deleted)
 				 */
 				nmask = 0;
 				for (ii = 0; ii < tmp; ii++) {
-					nmask |= 1 << (31 - ii);
+					nmask |= (uint32_t)1 << (31 - ii);
 				}
 
 				vip->intf_netmask.s_addr = htonl(nmask);
@@ -2699,6 +2699,7 @@ vrrp_ctrl_listener(void)
 	pthread_attr_t		attr;
 	pthread_t		tid;
 	fd_set			fds;
+	mode_t			old_umask;
 
 	if ((vrrp_unix_socket = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
 		vrrp_quit("failed to open UNIX socket (%s)", strerror(errno));
@@ -2708,11 +2709,16 @@ vrrp_ctrl_listener(void)
 	addr.sun_family = AF_UNIX;
 	(void) strlcpy(addr.sun_path, VRRP_UNIX_SOCKET, sizeof (addr.sun_path));
 
+	old_umask = umask(0177);
+
 	if (bind(vrrp_unix_socket, (struct sockaddr *)&addr,
 	    sizeof (addr)) != 0) {
+		(void) umask(old_umask);
 		vrrp_quit("failed to bind to UNIX socket (%s)",
 		    strerror(errno));
 	}
+
+	(void) umask(old_umask);
 
 	ret = pthread_attr_init(&attr);
 	assert(ret == 0);
