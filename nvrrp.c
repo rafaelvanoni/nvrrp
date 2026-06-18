@@ -752,7 +752,6 @@ vrrp_find_and_lock(char *filename, char *primary, char *vip,
 	if (session != NULL) {
 		vrrp_rwlock_unlock(&vrrp_list_rwlock);
 		*ret_session = session;
-
 		return (SF_LOCKED);
 	}
 
@@ -764,7 +763,7 @@ vrrp_find_and_lock(char *filename, char *primary, char *vip,
 	 */
 	for (ii = 0; ii < MAX_NUM_VRRP_INTF; ii++) {
 		session = &vrrp_session_array[ii];
-		vrrp_rwlock_rdlock(&session->vs_rwlock);
+		vrrp_rwlock_wrlock(&session->vs_rwlock);
 
 		if (session->vs_session_state != SS_FREE) {
 			if (strcasecmp(session->vs_primary.intf_name,
